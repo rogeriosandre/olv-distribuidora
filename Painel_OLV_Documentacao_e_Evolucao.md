@@ -3,7 +3,7 @@
 
 **Documentação do funcionamento e plano de evolução**
 
-Versão 1.8 · 26/07/2026
+Versão 2.8 · 26/07/2026
 Preparado para Rogério
 
 ---
@@ -27,7 +27,7 @@ O projeto é um painel operacional da OLV Distribuidora que roda no navegador (c
 
 O objetivo é dar autonomia para lançar e consultar o dia a dia do negócio em um só lugar, com cálculos automáticos de lucro e de saldo de estoque, e sem depender de nenhum aplicativo instalado.
 
-**Estado atual**: existe uma única versão do painel, acessível pela web. A antiga versão desktop (que rodava dentro do Cowork) foi aposentada, e agora tudo é mantido em um só lugar. Desde 25/07/2026, o acesso passou a ser por login individual com papéis (administrador e vendedor), substituindo a chave única anterior.
+**Estado atual**: existe uma única versão do painel, acessível pela web. A antiga versão desktop (que rodava dentro do Cowork) foi aposentada, e agora tudo é mantido em um só lugar. Desde 25/07/2026, o acesso passou a ser por login individual com papéis (administrador e colaborador), substituindo a chave única anterior.
 
 **Decisão de 25/07/2026 (banco de dados)**: o sistema é construído do zero sobre o Supabase, um banco de dados profissional (PostgreSQL), o mesmo tipo usado em aplicativos de mercado. Não há migração de dados antigos: o sistema começa vazio e vai sendo preenchido pelo uso, com apenas os clientes e os usuários de login inseridos na abertura.
 
@@ -67,21 +67,195 @@ Três peças sustentam o login multiusuário, sem alterar o fluxo principal Nave
 
 Cada assunto vive em uma tabela própria, ligada às outras por um código (ID). É a diferença entre um caderno único onde tudo é anotado na mesma página e um arquivo com pastas separadas que se referenciam.
 
-Sete tabelas criadas em 25/07/2026, com a tranca de segurança (RLS, proteção por linha) ativada:
+Sete tabelas criadas em 25/07/2026, todas com a tranca de segurança (RLS, proteção por linha) ativada. O esquema abaixo foi lido direto do banco em 26/07/2026.
 
-| Tabela | O que guarda | Campos já definidos |
-|--------|--------------|---------------------|
-| clientes | Cadastro de clientes | nome, endereço, bairro, telefone, ID próprio |
-| produtos | Catálogo | nome padronizado, custo atual, estoque mínimo |
-| vendas | Cada venda | ligada ao cliente e ao produto pelo ID; guarda o responsável (quem lançou) |
-| pagamentos | Formas de pagamento da venda | ligada à venda; permite mais de uma forma por venda |
-| estoque_movimentacoes | Movimentações | entrada, ajuste e estoque inicial |
-| contas_pagar | Base do financeiro | fornecedor, descrição, valor, vencimento, status, categoria |
-| contas_receber | Base do financeiro | cliente, valor, vencimento, status |
+### Como ler as tabelas
 
-**Anexos**: boletos e comprovantes ficam no Supabase Storage, ligados à conta correspondente.
+- **ID**: número que o banco gera sozinho a cada novo registro, sem repetir nunca. É a identidade permanente daquele registro.
+- **Obrigatório**: o banco recusa a gravação se o campo vier vazio.
+- **Número**: aceita casas decimais (valores e quantidades).
+- **Data e hora**: registrada com fuso horário.
+- **Calculada**: o banco calcula sozinho a partir de outros campos. Não é digitada e não sai errada.
+- **Validação**: lista fechada de valores aceitos. O banco recusa qualquer coisa fora dela.
 
-**Pendente**: a especificação completa de colunas, tipos, chaves e índices de cada tabela ainda não foi escrita. É a próxima tarefa da etapa 9.1 e deve ser detalhada aqui quando concluída.
+### 3.1 clientes
+
+| Campo | Tipo | Regra |
+|-------|------|-------|
+| id | ID | Chave do registro |
+| nome | Texto | Obrigatório |
+| endereco | Texto | Opcional |
+| bairro | Texto | Opcional |
+| telefone | Texto | Opcional. Guardado como digitado |
+| telefone_norm | Texto | **Gerado pelo banco**: o telefone só com dígitos. **Único**, impede cliente duplicado |
+| observacao | Texto | Opcional |
+| criado_em | Data e hora | Preenchido sozinho na criação |
+
+**Trava de duplicidade (26/07/2026)**: o banco cria sozinho uma versão do telefone só com números e não permite dois clientes com o mesmo. Assim, "(27) 99999-8888" e "27999998888" são reconhecidos como o mesmo contato, mesmo digitados de formas diferentes.
+
+Dois limites conhecidos e aceitos:
+
+- **Cliente sem telefone não é protegido.** Vários cadastros sem número são permitidos, porque o banco não tem como saber se são a mesma pessoa. A defesa aqui é o painel avisar quando já existe cliente com nome parecido.
+- **Telefone compartilhado bloqueia o segundo cadastro.** Casal ou portaria de condomínio com o mesmo número. Na prática costuma ser o mesmo cliente de entrega; se precisar separar, cadastre o segundo sem telefone.
+
+### 3.2 produtos
+
+| Campo | Tipo | Regra |
+|-------|------|-------|
+| id | ID | Chave do registro |
+| nome | Texto | Obrigatório e **único**: o banco impede cadastrar o mesmo produto duas vezes |
+| unidade | Texto | Opcional (ex.: unidade de medida do produto) |
+| custo_atual | Número | Opcional |
+| estoque_minimo | Número | Começa em 0 |
+| ativo | Sim/Não | Começa como ativo. Permite aposentar um produto sem apagar o histórico |
+| criado_em | Data e hora | Preenchido sozinho na criação |
+
+### 3.3 vendas
+
+| Campo | Tipo | Regra |
+|-------|------|-------|
+| id | ID | Chave do registro |
+| cliente_id | Ligação | Aponta para clientes. Opcional |
+| produto_id | Ligação | Aponta para produtos. Opcional |
+| quantidade | Número | Obrigatório |
+| valor_total | Número | Obrigatório |
+| custo_unitario | Número | Opcional |
+| data | Data | Começa com a data de hoje |
+| status | Texto | Obrigatório, **validado**. Começa como Aguardando. Ver o fluxo abaixo |
+| tipo_entrega | Texto | Obrigatório, **validado**: Entrega ou Retirada. Começa como Entrega |
+| pre_pago | Sim/Não | Obrigatório. Começa como Não. Marca o pedido pago antes do resgate |
+| data_conclusao | Data | **Preenchida pelo banco** quando o pedido vira Concluído. Volta a ficar vazia se o status recuar |
+| observacao | Texto | Opcional |
+| responsavel | Texto | Quem lançou, preenchido pelo sistema |
+| criado_em | Data e hora | Preenchido sozinho na criação |
+| custo_total | **Calculada** | quantidade × custo_unitario (custo vazio conta como zero) |
+| lucro | **Calculada** | valor_total − (quantidade × custo_unitario) |
+
+**Dois campos, duas perguntas** (definido em 26/07/2026):
+
+O pedido tem dois eixos independentes. Misturar os dois num campo só impede representar situações reais, como uma retirada que ainda vai ser buscada.
+
+| Campo | Valores | Responde |
+|-------|---------|----------|
+| tipo_entrega | Entrega, Retirada | Como o pedido sai |
+| status | Aguardando, Em rota, Concluído | Em que etapa ele está |
+
+**Fluxo por tipo:**
+
+| Tipo | Caminho |
+|------|---------|
+| Entrega | Aguardando → Em rota → Concluído |
+| Retirada | Aguardando → Concluído |
+
+O banco recusa a combinação Retirada com Em rota, porque pedido de balcão não sai para rota. O status trata apenas do andamento; se o cliente pagou ou não é assunto da tabela contas_receber.
+
+**Pedido pré-pago** (definido em 26/07/2026): o cliente paga hoje e resgata depois, podendo levar dias ou meses. O campo pre_pago é um terceiro eixo, independente dos outros dois, porque um pré-pago continua sendo entrega ou retirada.
+
+| Momento | O que se movimenta | O que não se movimenta |
+|---------|--------------------|------------------------|
+| Pedido criado e pago | Financeiro | Estoque |
+| Pedido concluído | Estoque, na data da conclusão | Financeiro |
+
+É por isso que existe a data_conclusao: sem ela, o estoque cairia no dia do pagamento, com o produto ainda no depósito. O banco preenche essa data sozinho quando o pedido é concluído, sem depender de ninguém lembrar.
+
+**Ponto importante**: custo_total e lucro são calculados pelo próprio banco. Se o valor ou a quantidade mudarem, os dois se atualizam sozinhos. Isso resolve de forma definitiva o problema antigo de números que não recalculavam depois de editados.
+
+### 3.4 pagamentos
+
+Uma venda pode ter mais de uma linha aqui, o que permite pagamento dividido (parte em dinheiro, parte no crédito).
+
+| Campo | Tipo | Regra |
+|-------|------|-------|
+| id | ID | Chave do registro |
+| venda_id | Ligação | Aponta para vendas. Obrigatório |
+| forma | Texto | Obrigatório (Pix, Dinheiro, Crédito, Crediario, Em aberto) |
+| valor | Número | Obrigatório |
+| criado_em | Data e hora | Preenchido sozinho na criação |
+
+### 3.5 estoque_movimentacoes
+
+| Campo | Tipo | Regra |
+|-------|------|-------|
+| id | ID | Chave do registro |
+| produto_id | Ligação | Aponta para produtos. Obrigatório |
+| tipo | Texto | **Validado**: só aceita Entrada, Ajuste ou Estoque Inicial |
+| quantidade | Número | Obrigatório |
+| data | Data | Começa com a data de hoje |
+| responsavel | Texto | Quem lançou |
+| observacao | Texto | Opcional |
+| criado_em | Data e hora | Preenchido sozinho na criação |
+
+### 3.6 contas_pagar
+
+| Campo | Tipo | Regra |
+|-------|------|-------|
+| id | ID | Chave do registro |
+| fornecedor | Texto | Opcional |
+| descricao | Texto | Opcional |
+| valor | Número | Obrigatório |
+| vencimento | Data | Opcional |
+| status | Texto | **Validado**: Em aberto ou Pago. Começa como Em aberto |
+| categoria | Texto | Opcional |
+| pago_em | Data | Preenchido na baixa |
+| anexo_url | Texto | Endereço do boleto ou comprovante no Supabase Storage |
+| criado_em | Data e hora | Preenchido sozinho na criação |
+
+### 3.7 contas_receber
+
+| Campo | Tipo | Regra |
+|-------|------|-------|
+| id | ID | Chave do registro |
+| cliente_id | Ligação | Aponta para clientes. Opcional |
+| venda_id | Ligação | Aponta para vendas. Opcional |
+| descricao | Texto | Opcional |
+| valor | Número | Obrigatório |
+| vencimento | Data | Opcional |
+| status | Texto | **Validado**: Em aberto ou Recebido. Começa como Em aberto |
+| recebido_em | Data | Preenchido na baixa |
+| criado_em | Data e hora | Preenchido sozinho na criação |
+
+### 3.8 Como as tabelas se ligam
+
+```
+clientes ──┬─→ vendas ──┬─→ pagamentos
+           │            └─→ contas_receber
+           └─→ contas_receber
+
+produtos ──┬─→ vendas
+           └─→ estoque_movimentacoes
+
+contas_pagar (independente)
+```
+
+O banco impede apagar um cliente ou produto que tenha lançamento ligado a ele, o que protege o histórico contra exclusão acidental.
+
+**Anexos**: boletos e comprovantes ficam no Supabase Storage, com o endereço guardado no campo anexo_url.
+
+### 3.9 Pendências e decisões em aberto *
+
+Levantadas em 26/07/2026 na leitura do banco. Nenhuma foi decidida ainda.
+
+| # | Ponto | Por que importa |
+|---|-------|-----------------|
+| 1 | **A forma de pagamento saiu de vendas e foi para pagamentos** | Toda venda passa a gravar em duas tabelas. Muda o desenho da religação do fluxo de vendas. |
+| 2 | ~~clientes.nome não é único~~ | **Resolvido em 26/07/2026**: a trava passou a ser pelo telefone, normalizado pelo banco (só dígitos). O nome segue livre, porque dois clientes podem ter o mesmo nome legitimamente. |
+| 3 | ~~vendas.status aceita qualquer texto~~ | **Resolvido em 26/07/2026**: campo obrigatório, com lista fechada de quatro valores (Aguardando, Em rota, Entregue, Retirada) e início em Aguardando. O valor "Recebido" foi descartado, já que o controle de pagamento do crediário passa a viver em Contas a Receber. O status "Em rota" foi criado para cobrir o pedido já despachado. |
+| 4 | **Nada garante que a soma dos pagamentos bata com o valor da venda** | Regra de negócio ainda não existe no banco. |
+| 5 | **Não existe tabela de caixa nem de usuários no Supabase** | Caixa é a etapa 9.5. O login segue na Data Table do n8n; falta decidir se migra. |
+| 6 | ~~A regra de baixa de estoque precisa mudar de gatilho~~ | **Resolvido em 26/07/2026**, autorizado por Rogério: a baixa passou a ocorrer na conclusão do pedido, pela data da conclusão. Seção 6 atualizada. |
+
+### 3.10 Verificações concluídas (26/07/2026)
+
+**Índices: em ordem.** Um índice funciona como o sumário de um livro: sem ele, o banco lê tudo para achar uma linha. Já existem em vendas (data, cliente_id, produto_id), estoque_movimentacoes (data, produto_id), pagamentos (venda_id), contas_receber (vencimento, venda_id) e contas_pagar (vencimento). A performance está coberta para o crescimento previsto.
+
+Duas ausências de baixo impacto, registradas sem urgência: contas_receber.cliente_id e clientes.nome. O segundo só passa a pesar se a busca por nome no autocompletar ficar lenta com a base cheia.
+
+**RLS: configuração correta, com um esclarecimento importante.** A tranca está ativa nas 7 tabelas e **não existe nenhuma política liberando acesso**. O efeito prático é:
+
+- As chaves públicas do Supabase (usadas por navegador) ficam **totalmente bloqueadas**. Ninguém lê nem grava nada por fora.
+- O n8n conecta com um usuário que ignora a tranca por natureza, então tem acesso completo.
+
+Ou seja, a porta da frente está fechada e só o n8n tem a chave de serviço. **A proteção por papel (administrador x colaborador) depende inteiramente da validação dentro do n8n**, não do banco. Isso é aceitável no desenho atual, em que o navegador nunca fala direto com o Supabase. Se um dia o painel passar a acessar o banco diretamente, será obrigatório escrever políticas antes.
 
 ---
 
@@ -126,9 +300,9 @@ O workflow "OLV Atendimento - Agente WhatsApp" pertence a outro projeto e não f
 - Tela de login com usuário e senha, no lugar da chave única.
 - Crachá no topo com o nome e o papel de quem está logado, e os botões Trocar senha e Sair.
 - Troca de senha obrigatória no primeiro acesso e disponível a qualquer momento.
-- Área de Usuários (só administrador): listar, criar usuário, tornar administrador ou vendedor e ativar/desativar acessos.
+- Área de Usuários (só administrador): listar, criar usuário, tornar administrador ou colaborador e ativar/desativar acessos.
 - Responsável automático: o campo "quem lançou" saiu do formulário; o sistema preenche sozinho com o usuário logado.
-- Trava de dono: o vendedor só vê Editar e Excluir nas próprias linhas, e o servidor confere o dono antes de gravar.
+- Trava de dono: o colaborador só vê Editar e Excluir nas próprias linhas, e o servidor confere o dono antes de gravar.
 
 ---
 
@@ -136,7 +310,15 @@ O workflow "OLV Atendimento - Agente WhatsApp" pertence a outro projeto e não f
 
 ### Estoque atual
 
-Estoque atual = último Estoque Inicial + entradas ± ajustes − vendas, considerando apenas as datas iguais ou posteriores à data da contagem inicial. Vendas sem quantidade preenchida não abatem estoque.
+Estoque atual = último Estoque Inicial + entradas ± ajustes − vendas concluídas, considerando apenas as datas iguais ou posteriores à data da contagem inicial. Vendas sem quantidade preenchida não abatem estoque.
+
+**Gatilho da baixa (alterado em 26/07/2026, autorizado por Rogério)**: a venda abate estoque quando o pedido é **concluído**, pela data da conclusão. Antes, a baixa acontecia na data do lançamento do pedido.
+
+Motivo: pedido lançado não é produto que saiu. Num pré-pago, a diferença entre pagar e resgatar pode ser de meses, e a regra antiga derrubaria o estoque com o produto ainda no depósito. A regra antiga também errava, em menor grau, em qualquer pedido lançado e entregue depois; só não aparecia porque quase tudo era do mesmo dia.
+
+**O que o número passa a significar**: produto disponível no depósito hoje. Pedidos em Aguardando e Pré-pagos não abateram estoque, porque o produto continua lá.
+
+**Ponto de atenção**: pedidos em Em rota também não abatem, embora o produto já esteja no caminhão. É proposital, para que uma entrega não realizada não precise de estorno. Em compensação, durante a rota o estoque do sistema fica um pouco acima do que existe fisicamente na loja.
 
 ### Lucro
 
@@ -154,9 +336,9 @@ O acesso é por login individual: cada pessoa tem usuário e senha próprios e u
 
 **Administrador**: vê tudo (faturamento, lucro, margem, valores por forma de pagamento e gráfico em R$), edita e exclui qualquer lançamento e gerencia usuários (cria, muda papel, ativa e desativa).
 
-**Vendedor**: vê o operacional (itens vendidos, número de vendas e estoque atual), sem faturamento, lucro nem margem; só edita e exclui as próprias vendas e lançamentos, com a trava conferida também no servidor.
+**Colaborador**: vê o operacional (itens vendidos, número de vendas e estoque atual), sem faturamento, lucro nem margem; só edita e exclui as próprias vendas e lançamentos, com a trava conferida também no servidor.
 
-**Contas iniciais**: Rogério (administrador), Gabriele (administradora) e Vendedor (vendedor). Todas começam com senha temporária, trocada no primeiro acesso. A criação de contas é feita só pelo administrador (não há autocadastro na tela de login).
+**Contas iniciais**: Rogério (administrador), Gabriele (administradora) e Colaborador (colaborador). Todas começam com senha temporária, trocada no primeiro acesso. A criação de contas é feita só pelo administrador (não há autocadastro na tela de login).
 
 ### Como as senhas e a sessão são protegidas (siglas explicadas)
 
@@ -175,7 +357,7 @@ O acesso é por login individual: cada pessoa tem usuário e senha próprios e u
 - Cada venda e cada lançamento é identificado por um ID próprio do banco, estável e independente da ordem em que aparecem na tela.
 - Os nomes de produto precisam bater exatamente (a comparação é sem diferenciar maiúsculas/minúsculas); por isso o produto é escolhido em menu suspenso.
 - O endpoint de leitura foi configurado com cabeçalho no-store e um parâmetro anti-cache, para o painel sempre puxar dados frescos após uma gravação.
-- **Custo do vendedor (pendência)**: o campo "Custo unitário" foi ocultado do vendedor. Enquanto a busca automática do último custo do produto não for implementada, as vendas lançadas por vendedores ficam sem custo, e o lucro dessas vendas fica igual ao valor. Vale priorizar essa melhoria ou reavaliar mostrar o campo.
+- **Custo do colaborador (pendência)**: o campo "Custo unitário" foi ocultado do colaborador. Enquanto a busca automática do último custo do produto não for implementada, as vendas lançadas por colaboradores ficam sem custo, e o lucro dessas vendas fica igual ao valor. Vale priorizar essa melhoria ou reavaliar mostrar o campo.
 
 ---
 
@@ -197,21 +379,21 @@ Antes de cada etapa que mexe no painel, guardamos uma cópia da versão anterior
 
 #### Andamento (concluído em 25/07/2026)
 
-- Banco de dados criado no Supabase (projeto olv-distribuidora, região São Paulo).
+- Banco de dados criado no Supabase (projeto olv-distribuidora_sistema, região São Paulo).
 - As 7 tabelas no ar, ainda vazias: clientes, produtos, vendas, pagamentos, estoque_movimentacoes, contas_pagar e contas_receber.
 - Tranca de segurança (RLS) ativada em todas as tabelas.
 - n8n ligado ao Supabase pela conexão Session Pooler (IPv4), credencial "Supabase OLV". Teste de consulta de ponta a ponta feito com sucesso.
 
 #### Falta
 
-- Especificar as colunas, tipos, chaves e índices de cada tabela (detalhar na seção 3).
-- Importar os clientes (Google Contatos), com limpeza e padronização de nomes antes de subir.
+- Especificar as colunas, tipos, chaves e índices de cada tabela: **concluído em 26/07/2026**, documentado na seção 3.
+- Importar os clientes (Google Contatos), com limpeza e padronização de nomes antes de subir. **Atenção**: a trava de telefone recusa contatos repetidos, então a importação precisa tratar o erro de duplicidade em vez de parar no primeiro conflito.
 - Religar os fluxos de vendas e estoque para gravar no Supabase.
 
 #### O que entra na abertura
 
 - **Clientes**: importados do Google Contatos (nome e endereço já salvos), com limpeza e padronização antes de subir.
-- **Usuários de login**: recriados os acessos que já existem (Rogério e Gabriele como administradores e o Vendedor).
+- **Usuários de login**: recriados os acessos que já existem (Rogério e Gabriele como administradores e o Colaborador).
 - **O resto, manual**: estoque, caixa, contas a pagar e a receber são lançados por você, pelo próprio painel, a partir da virada. Recomendação: no dia da virada, faça a contagem física do estoque (lançamento Estoque Inicial) e cadastre as vendas ainda em aberto, para os números começarem certos.
 
 #### Por que fazer isso
@@ -234,7 +416,7 @@ Repaginar a interface para ficar mais moderna, mais rápida de usar e mais organ
 
 - Nova identidade visual: cores, tipografia e cards mais limpos; modo claro/escuro.
 - Navegação: hoje são abas Vendas/Estoque no topo; avaliar um menu inferior fixo (estilo app) que comporte também Financeiro.
-- Tela inicial com resumo do dia (vendas de hoje, a receber vencendo, estoque baixo) como primeira coisa que aparece.
+- Tela inicial com resumo do dia como primeira coisa que aparece (indicadores definidos abaixo).
 - Transformar o painel em atalho na tela inicial do celular (PWA), abrindo como se fosse um aplicativo, inclusive com ícone próprio.
 - Alertas visuais: estoque mínimo por produto e contas vencendo.
 
@@ -242,10 +424,64 @@ Repaginar a interface para ficar mais moderna, mais rápida de usar e mais organ
 
 O painel passa a ter seis seções: Dashboard (métricas), Vendas, Estoque, Clientes, Contas a Pagar e Contas a Receber.
 
+#### Dashboard: indicadores da tela inicial *
+
+| Indicador | O que mostra | Por que importa |
+|-----------|--------------|-----------------|
+| Vendas de hoje | Quantidade e faturamento do dia | Pulso do dia |
+| A receber vencendo | Contas a receber no vencimento ou vencidas | Cobrança |
+| Estoque baixo | Produtos abaixo do estoque mínimo | Reposição |
+| **Pré-pagos a entregar** | Valor total e quantidade de pedidos pagos ainda não resgatados | Definido em 26/07/2026. Ver explicação abaixo |
+
+**Sobre o indicador de pré-pagos**: a soma dos pré-pagos pendentes é produto que a empresa já recebeu e ainda deve entregar. É uma obrigação assumida, não lucro realizado. Serve para dois usos práticos: saber quanto de produto está comprometido antes de fazer uma compra, e enxergar pedidos esquecidos há meses. Hoje esse número não existe em lugar nenhum.
+
+#### Seção Vendas: quadro de operação por status (definido em 26/07/2026)
+
+A seção de Vendas deixa de ser só um histórico e passa a ser a tela de trabalho do dia. Os pedidos aparecem em lista, dividida em abas por status, e o operador vai movendo cada pedido conforme o andamento.
+
+- **Quatro abas**, com esta regra de roteamento (cada pedido aparece em uma só):
+
+| Aba | Regra |
+|-----|-------|
+| Aguardando | Não concluído, não pré-pago. O trabalho do dia |
+| Pré-pagos | Pago e ainda não resgatado, sem prazo definido |
+| Em rota | Saiu para entrega |
+| Concluídos | Finalizados, mostrando o dia atual por padrão |
+
+- O tipo Entrega ou Retirada aparece como marca visual no pedido, não como aba.
+- Um pré-pago sai da sua aba assim que entra no fluxo do dia, e segue o caminho normal.
+- A aba Pré-pagos é ordenada do mais antigo para o mais novo e permite busca por cliente, porque o atendimento começa quando o cliente aparece no balcão.
+- **No cadastro**: o operador informa o status e o pedido já entra direto na aba correspondente.
+- **Botão de mudança rápida**: cada pedido na lista muda de status com um toque, sem abrir a tela de edição completa.
+
+É o mesmo princípio de um quadro de tarefas: cada coluna é uma etapa, e o cartão anda de coluna conforme o trabalho avança.
+
+**Pontos em aberto desta tela:**
+
+| # | Ponto | Alternativas |
+|---|-------|--------------|
+| A | Quantas abas | **Resolvido**: quatro (Aguardando, Pré-pagos, Em rota, Concluídos) |
+| B | O que a aba de concluídos mostra | Só o dia atual por padrão, para não carregar milhares de pedidos antigos |
+| C | Quais mudanças de status são permitidas | Livre em qualquer direção, ou só avançar, com exceção para corrigir engano |
+| D | Contador na aba | Mostrar ou não a quantidade de pedidos em cada aba |
+| E | Registrar a hora de cada mudança | Necessário se um dia você quiser medir o tempo entre pedido e entrega |
+| F | Quem pode mudar o status | **Resolvido**: qualquer usuário ativo |
+
+**Resolvido (F), 26/07/2026**: as permissões passam a ser separadas por tipo de ação, e não por tela.
+
+| Ação | Quem pode |
+|------|-----------|
+| Mudar o status do pedido | Qualquer usuário ativo, em qualquer pedido |
+| Editar valores, quantidade, cliente ou produto | Só o dono do lançamento, e o administrador |
+| Excluir lançamento | Só o dono do lançamento, e o administrador |
+
+O raciocínio: mudar status é ação operacional e reversível com um toque; alterar valor ou excluir é irreversível na prática. A proteção fica onde está o risco, que é o dinheiro, sem travar a operação do dia.
+
 #### Cuidados
 
 - Performance: manter o carregamento leve conforme o volume cresce (paginação, carregar só o necessário).
 - Não quebrar os fluxos de gravação já validados ao trocar o visual.
+- A aba de pedidos concluídos é a que mais cresce; sem filtro de período padrão, vira o ponto de lentidão da tela.
 
 ### 9.3 Upgrade 2: Login para múltiplos usuários (concluído)
 
@@ -253,7 +489,7 @@ O painel passa a ter seis seções: Dashboard (métricas), Vendas, Estoque, Clie
 
 #### Opção A: Contas individuais com papéis (ESCOLHIDA)
 
-Cada pessoa tem usuário e senha próprios e um papel (por exemplo: administrador vê tudo; vendedor só lança vendas).
+Cada pessoa tem usuário e senha próprios e um papel (por exemplo: administrador vê tudo; colaborador só lança vendas).
 
 **Prós**: rastreabilidade (registra quem fez cada lançamento), permissões por função, desligar o acesso de uma pessoa sem afetar as outras.
 
@@ -381,7 +617,7 @@ Estes pontos vêm da conversa "Diferença entre nota fiscal e cupom fiscal" e de
 
 **Decisões a fechar quando chegarmos em cada etapa:**
 
-- Login: opção A ou B; quais pessoas e (se A) quais papéis. **RESOLVIDO: Opção A, Rogério e Gabriele administradores, Vendedor vendedor.**
+- Login: opção A ou B; quais pessoas e (se A) quais papéis. **RESOLVIDO: Opção A, Rogério e Gabriele administradores, Colaborador colaborador.**
 - Financeiro: quais categorias de contas a pagar.
 - Caixa: um caixa único ou um por operador; o que entra como sangria e reforço; como tratar diferenças no fechamento.
 - Fiscal: confirmar ST do gás e tratamento do vasilhame com o contador; gerar o CSC na SEFAZ-ES; resolver o cadastro da inscrição estadual no provedor (NFe.io).
@@ -396,7 +632,7 @@ Estes pontos vêm da conversa "Diferença entre nota fiscal e cupom fiscal" e de
 | Item | Valor |
 |------|-------|
 | URL do painel | https://n8n-wmtt.srv1830312.hstgr.cloud/webhook/olv-painel |
-| Autenticação | Login por usuário e senha, com papéis (administrador e vendedor). Token de sessão de 12h. Chave única OLV2026 removida. |
+| Autenticação | Login por usuário e senha, com papéis (administrador e colaborador). Token de sessão de 12h. Chave única OLV2026 removida. |
 | Instância n8n | n8n-wmtt.srv1830312.hstgr.cloud |
 | Workflow do painel | OLV Painel Mobile (web) |
 | Workflow de vendas | OLV Vendas – Lançamento (painel), endpoint /webhook/olv-venda |
@@ -405,7 +641,7 @@ Estes pontos vêm da conversa "Diferença entre nota fiscal e cupom fiscal" e de
 | Workflow de contas | OLV Contas (gestão de usuários; só administrador) |
 | Tabelas internas do n8n | OLV Usuarios (usuários e papéis) e OLV Painel HTML (HTML do painel em base64) |
 | Pontos de restauração (v1.4) | Painel 63bf15bb; Vendas 348ed17a; Estoque 2adfcba0 |
-| Banco de dados | Supabase (PostgreSQL), projeto olv-distribuidora, região São Paulo. 7 tabelas criadas em 25/07/2026, RLS ativa. Sem migração histórica. |
+| Banco de dados | Supabase (PostgreSQL), projeto olv-distribuidora_sistema, região São Paulo. 7 tabelas criadas em 25/07/2026, RLS ativa. Sem migração histórica. |
 | Domínio do painel | olvdistribuidora.com.br (Registro.br). Endereço planejado: painel.olvdistribuidora.com.br. DNS pendente. |
 | Fonte de clientes | Google Contatos (nome e endereço), com limpeza antes de importar. |
 | Conexão n8n → Supabase | Session Pooler (IPv4). Host aws-0-sa-east-1.pooler.supabase.com, porta 5432, base postgres, usuário postgres.ggvfrnympdrqyqxgcyex, SSL ativo. Credencial no n8n: "Supabase OLV". (A senha fica guardada só no n8n.) |
@@ -488,3 +724,13 @@ Registrado para não criar expectativa errada:
 | 25/07/2026 | 1.6 | Documento criado em .md; estrutura de atualização definida; login multiusuário implementado; banco Supabase criado; decisão tomada de construção do zero sem migração de histórico. |
 | 26/07/2026 | 1.7 | Criada a seção 12, Guia de Modelos por Etapa, com regra de acionamento, modelo indicado por tarefa e protocolo de aviso no início de cada tarefa. Incluída a regra 6 nas Instruções para Claude. |
 | 26/07/2026 | 1.8 | Removidas todas as referências à base anterior em planilha, conforme a decisão de sistema independente. A antiga seção 3 (estrutura da planilha) foi substituída pela seção 3, Estrutura de Dados (Supabase). Ajustadas as seções 1, 2, 2.1, 4, 5.1, 6, 8, 9.1, 9.4, 10, 11 e 12.3. |
+| 26/07/2026 | 1.9 | Seção 3 reescrita com o esquema real das 7 tabelas do Supabase (colunas, tipos, chaves, relacionamentos e validações), lido direto do banco. Criada a 3.9 com 5 decisões em aberto e 2 verificações. Corrigido o nome do projeto no Supabase. |
+| 26/07/2026 | 2.0 | Índices e políticas de RLS verificados no banco e documentados na nova seção 3.10. Confirmado que os índices necessários já existem e que a tranca do banco bloqueia acesso externo, com a proteção por papel dependendo do n8n. |
+| 26/07/2026 | 2.1 | Aplicada a validação de status em vendas (Entregue, Aguardando, Retirada). Decisão 3 da seção 3.9 concluída. |
+| 26/07/2026 | 2.2 | Status da venda passou a obrigatório, com valor inicial Aguardando e o novo estado Em rota. Fluxo dos quatro status documentado na seção 3.3. |
+| 26/07/2026 | 2.3 | Definida a seção Vendas como quadro de operação: lista dividida em abas por status, entrada direta na aba escolhida no cadastro e botão de mudança rápida. Registrados 6 pontos em aberto, incluindo o conflito entre o quadro compartilhado e a trava de dono. |
+| 26/07/2026 | 2.4 | Papel "Vendedor" renomeado para "Colaborador" em todo o documento. Ponto F da seção 9.2 resolvido: a trava de dono vale também para mudança de status. |
+| 26/07/2026 | 2.5 | Separados os eixos do pedido: nova coluna tipo_entrega (Entrega ou Retirada) e status reduzido a Aguardando, Em rota e Concluído, com o banco recusando Retirada em rota. Ponto F revisto: mudança de status liberada para qualquer usuário ativo, mantendo a trava de dono para editar valores e excluir. Abas do quadro definidas em três. |
+| 26/07/2026 | 2.6 | Criado o pedido pré-pago: campos pre_pago e data_conclusao, esta preenchida pelo banco na conclusão. Quadro de vendas passa a ter quatro abas, com o pré-pago em aba própria para não poluir a operação do dia. Registrada a pendência 6, mudança do gatilho de baixa de estoque. |
+| 26/07/2026 | 2.7 | Seção 6 alterada com autorização: a baixa de estoque passou da data do pedido para a data da conclusão. Pendência 6 encerrada. Definidos os indicadores do Dashboard, incluindo Pré-pagos a entregar. |
+| 26/07/2026 | 2.8 | Criada a trava de cliente duplicado por telefone, com normalização automática para só dígitos. Adicionado índice de busca por nome. Pendência 2 encerrada. |
