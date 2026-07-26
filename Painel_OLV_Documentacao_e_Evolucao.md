@@ -3,7 +3,7 @@
 
 **Documentação do funcionamento e plano de evolução**
 
-Versão 1.6 · 25/07/2026
+Versão 1.8 · 26/07/2026
 Preparado para Rogério
 
 ---
@@ -17,40 +17,43 @@ Este documento é a fonte única de verdade do projeto. Quando você o mencionar
 3. **Status e Andamento**: Atualize conforme Rogério relata progresso. Use a data do dia quando mudar status.
 4. **Falta/Pendência**: Sempre que uma tarefa ficar pronta, mude "Falta:" para "Concluído:" e inclua a data.
 5. **Data de última atualização**: Sempre que editar, atualize o "Versão" no topo (formato V.X · DD/MM/AAAA).
+6. **Modelo indicado**: ao iniciar qualquer tarefa deste projeto, informe na primeira linha o modelo indicado conforme a seção 12, e avise quando o modelo em uso for mais pesado que o necessário.
 
 ---
 
 ## 1. VISÃO GERAL
 
-O projeto é um painel operacional da OLV Distribuidora que roda no navegador (celular ou computador) e trabalha diretamente sobre a planilha Google Sheets "Vendas_OLV Distribuidora". Ele centraliza três frentes: registro e consulta de vendas, controle de estoque, e (na evolução planejada) o controle financeiro de contas a pagar e a receber.
+O projeto é um painel operacional da OLV Distribuidora que roda no navegador (celular ou computador). Ele centraliza três frentes: registro e consulta de vendas, controle de estoque, e (na evolução planejada) o controle financeiro de contas a pagar e a receber.
 
-O objetivo é dar autonomia para lançar e consultar o dia a dia do negócio sem abrir a planilha, com cálculos automáticos de lucro e de saldo de estoque, e sem depender de nenhum aplicativo instalado.
+O objetivo é dar autonomia para lançar e consultar o dia a dia do negócio em um só lugar, com cálculos automáticos de lucro e de saldo de estoque, e sem depender de nenhum aplicativo instalado.
 
 **Estado atual**: existe uma única versão do painel, acessível pela web. A antiga versão desktop (que rodava dentro do Cowork) foi aposentada, e agora tudo é mantido em um só lugar. Desde 25/07/2026, o acesso passou a ser por login individual com papéis (administrador e vendedor), substituindo a chave única anterior.
 
-**Decisão de 25/07/2026 (banco de dados)**: o projeto vai adotar o Supabase como novo banco de dados, construído do zero. O Supabase é um banco de dados profissional (PostgreSQL), o mesmo tipo usado em aplicativos de mercado. A planilha atual deixa de ser a base do sistema e passa a ser um arquivo histórico, mantido só para consulta. Não haverá migração dos dados antigos: o sistema começa vazio e vai sendo preenchido pelo uso, com apenas os clientes e os usuários de login inseridos na abertura.
+**Decisão de 25/07/2026 (banco de dados)**: o sistema é construído do zero sobre o Supabase, um banco de dados profissional (PostgreSQL), o mesmo tipo usado em aplicativos de mercado. Não há migração de dados antigos: o sistema começa vazio e vai sendo preenchido pelo uso, com apenas os clientes e os usuários de login inseridos na abertura.
 
 ---
 
-## 2. ARQUITETURA ATUAL
+## 2. ARQUITETURA
 
-O painel é uma página web servida pelo n8n. Toda leitura e gravação de dados passa pelo n8n, que por sua vez fala com o Google Sheets. O fluxo é direto e não depende de nenhum computador ligado:
+O painel é uma página web servida pelo n8n. Toda leitura e gravação de dados passa pelo n8n, que por sua vez fala com o banco de dados. O fluxo é direto e não depende de nenhum computador ligado:
 
 ```
-Navegador (celular/PC) → n8n (servidor) → Google Sheets
+Navegador (celular/PC) → n8n (servidor) → Supabase
 ```
 
-O celular abre a página do painel e envia as ações (nova venda, edição, lançamento de estoque) para o n8n. O n8n valida o login e o token de sessão, grava na planilha e devolve a resposta. A leitura dos dados vem de um endpoint do n8n que lê a planilha e devolve um JSON compacto.
+O celular abre a página do painel e envia as ações (nova venda, edição, lançamento de estoque) para o n8n. O n8n valida o login e o token de sessão, grava no banco e devolve a resposta. A leitura dos dados vem de um endpoint do n8n que consulta o banco e devolve um JSON compacto.
 
-Como é autônomo, o painel funciona 24/7 mesmo com o computador desligado. A única dependência é o servidor n8n estar no ar.
+Como é autônomo, o painel funciona 24/7 mesmo com o computador desligado. As dependências são o servidor n8n e o Supabase estarem no ar.
 
-**Evolução planejada (banco de dados)**: a arquitetura vai passar de Navegador → n8n → Google Sheets para Navegador → n8n → Supabase. O n8n é mantido como camada de trás (continua validando o login, calculando e gravando); só troca a planilha pelo Supabase como base de dados. Os anexos do financeiro (boletos e comprovantes) ficarão guardados no Supabase Storage, um cofre de arquivos do próprio Supabase. Esta mudança está planejada, ainda não concluída; o detalhamento está na seção 9.
+Os anexos do financeiro (boletos e comprovantes) ficarão guardados no Supabase Storage, um cofre de arquivos do próprio Supabase.
 
-### 2.1 Camada de login e usuários (novo)
+**Status em 26/07/2026**: a conexão entre n8n e Supabase está ativa e testada. A religação dos fluxos de vendas e estoque para gravar no Supabase é a pendência aberta da seção 9.1; até ela ser concluída, esses dois fluxos ainda gravam na base anterior, que está em desativação.
 
-Com o login multiusuário no ar, três peças novas passaram a fazer parte da arquitetura, sem mudar o fluxo principal Navegador → n8n → Google Sheets:
+### 2.1 Camada de login e usuários
 
-**Tabela de usuários ("OLV Usuarios")**: uma Data Table interna do n8n (uma tabelinha do próprio n8n, separada da planilha do negócio) que guarda usuário, nome, senha embaralhada, papel e se está ativo. Ficar fora da planilha é mais seguro, como manter a portaria num cômodo separado do cofre.
+Três peças sustentam o login multiusuário, sem alterar o fluxo principal Navegador → n8n → Supabase:
+
+**Tabela de usuários ("OLV Usuarios")**: uma Data Table interna do n8n (uma tabelinha do próprio n8n, separada da base do negócio) que guarda usuário, nome, senha embaralhada, papel e se está ativo. Manter os acessos apartados dos dados do negócio é mais seguro, como ter a portaria num cômodo separado do cofre.
 
 **Fluxo de Login ("OLV Login")**: recebe usuário e senha, confere na tabela e devolve um token de sessão (um crachá temporário assinado) que carrega o papel e o nome e expira sozinho em 12 horas.
 
@@ -60,44 +63,43 @@ Com o login multiusuário no ar, três peças novas passaram a fazer parte da ar
 
 ---
 
-## 3. A PLANILHA (FONTE DE DADOS)
+## 3. ESTRUTURA DE DADOS (SUPABASE)
 
-Toda a informação vive na planilha Google Sheets "Vendas_OLV Distribuidora". As abas relevantes para o painel são:
+Cada assunto vive em uma tabela própria, ligada às outras por um código (ID). É a diferença entre um caderno único onde tudo é anotado na mesma página e um arquivo com pastas separadas que se referenciam.
 
-### 3.1 Estrutura da aba Vendas Geral
+Sete tabelas criadas em 25/07/2026, com a tranca de segurança (RLS, proteção por linha) ativada:
 
-Cada venda é uma linha, com as colunas A a R. As colunas de cálculo (Custo Total, Lucro, Mês) são fórmulas nas linhas históricas.
+| Tabela | O que guarda | Campos já definidos |
+|--------|--------------|---------------------|
+| clientes | Cadastro de clientes | nome, endereço, bairro, telefone, ID próprio |
+| produtos | Catálogo | nome padronizado, custo atual, estoque mínimo |
+| vendas | Cada venda | ligada ao cliente e ao produto pelo ID; guarda o responsável (quem lançou) |
+| pagamentos | Formas de pagamento da venda | ligada à venda; permite mais de uma forma por venda |
+| estoque_movimentacoes | Movimentações | entrada, ajuste e estoque inicial |
+| contas_pagar | Base do financeiro | fornecedor, descrição, valor, vencimento, status, categoria |
+| contas_receber | Base do financeiro | cliente, valor, vencimento, status |
 
-| Coluna | Campo | Observação |
-|--------|-------|-----------|
-| B | Cliente | Nome do cliente |
-| C / D / E | Endereço / Bairro / Telefone | Dados de entrega, preenchidos pelo autocompletar |
-| F | Produto | Ex.: Água 20L, Gás 13kg |
-| G | Qtd. | Quantidade vendida (abate estoque) |
-| H | Valor Total | Valor da venda |
-| I | Data | Data da venda |
-| J | Forma de Pagamento | Pix, Crédito, Dinheiro, Crediario, Em aberto, etc. |
-| M | Status | Entregue, Aguardando, Recebido, Retirada |
-| N | Obs | Observação livre |
-| O | Custo Unitário | Custo por unidade (base do lucro) |
-| P / Q / R | Custo Total / Lucro / Mês | Calculados (Custo Total = Qtd × Custo; Lucro = Valor − Custo Total) |
-| S | Responsavel | Quem lançou a venda, preenchido automaticamente com o usuário logado. Vendas antigas ficam em branco. |
+**Anexos**: boletos e comprovantes ficam no Supabase Storage, ligados à conta correspondente.
+
+**Pendente**: a especificação completa de colunas, tipos, chaves e índices de cada tabela ainda não foi escrita. É a próxima tarefa da etapa 9.1 e deve ser detalhada aqui quando concluída.
 
 ---
 
 ## 4. OS WORKFLOWS N8N
 
-O painel é sustentado por cinco workflows ativos na instância n8n-wmtt.srv1830312.hstgr.cloud. Todos usam a mesma credencial do Google Sheets. São todos necessários:
+O painel é sustentado por cinco workflows ativos na instância n8n-wmtt.srv1830312.hstgr.cloud. São todos necessários:
 
 | Workflow | O que faz | Endpoint |
 |----------|-----------|----------|
 | OLV Painel Mobile (web) | Serve a página HTML do painel e o endpoint de leitura de dados (vendas + estoque + clientes). | /webhook/olv-painel e /webhook/olv-dados |
-| OLV Vendas – Lançamento (painel) | Cria, edita e exclui vendas na aba Vendas Geral. Calcula Custo Total, Lucro e Mês. | POST /webhook/olv-venda |
-| OLV Estoque – Lançamento (painel) | Cria, edita e exclui lançamentos de estoque na aba Estoque. | POST /webhook/olv-estoque |
+| OLV Vendas – Lançamento (painel) | Cria, edita e exclui vendas. Calcula Custo Total, Lucro e Mês. | POST /webhook/olv-venda |
+| OLV Estoque – Lançamento (painel) | Cria, edita e exclui lançamentos de estoque. | POST /webhook/olv-estoque |
 | OLV Login | Recebe usuário e senha, confere na tabela de usuários e devolve o token de sessão (crachá temporário de 12 horas). | POST (webhook do fluxo OLV Login) |
 | OLV Contas | Cria usuário, troca senha, lista, muda papel e ativa/desativa acessos. Ações de administração exigem papel de administrador. | POST (webhook do fluxo OLV Contas) |
 
-Há ainda um workflow "OLV Estoque – Setup aba" que já foi arquivado (cumpriu a função de criar a aba Estoque). O "OLV Atendimento - Agente WhatsApp" pertence a outro projeto e não faz parte do painel.
+**Pendente**: os fluxos de vendas e estoque ainda precisam ser religados para gravar no Supabase (ver seção 9.1).
+
+O workflow "OLV Atendimento - Agente WhatsApp" pertence a outro projeto e não faz parte do painel.
 
 ---
 
@@ -109,7 +111,7 @@ Há ainda um workflow "OLV Estoque – Setup aba" que já foi arquivado (cumpriu
 - Indicadores do período: itens vendidos, faturamento, lucro e número de vendas, com médias e margem.
 - Quantidade por produto e valores por forma de pagamento.
 - Gráfico de evolução por produto (por dia ou por mês, alternando entre quantidade e faturamento).
-- Nova venda: formulário com autocompletar de cliente (puxa endereço, bairro e telefone da aba Clientes) e cálculo automático de custo total e lucro.
+- Nova venda: formulário com autocompletar de cliente (puxa endereço, bairro e telefone da tabela clientes) e cálculo automático de custo total e lucro.
 - Editar e excluir vendas direto na lista, com confirmação em dois cliques na exclusão.
 - Filtros de consulta: por produto, forma de pagamento e status, além da busca por texto (cliente/produto).
 
@@ -119,7 +121,7 @@ Há ainda um workflow "OLV Estoque – Setup aba" que já foi arquivado (cumpriu
 - Lançamento de movimentações: Entrada, Ajuste (aceita negativo) e Estoque Inicial (contagem que zera o histórico anterior daquele produto).
 - Histórico de lançamentos com editar e excluir.
 
-### 5.3 Login, usuários e papéis (novo)
+### 5.3 Login, usuários e papéis
 
 - Tela de login com usuário e senha, no lugar da chave única.
 - Crachá no topo com o nome e o papel de quem está logado, e os botões Trocar senha e Sair.
@@ -138,7 +140,7 @@ Estoque atual = último Estoque Inicial + entradas ± ajustes − vendas, consid
 
 ### Lucro
 
-Lucro = Valor Total − (Quantidade × Custo Unitário). O custo unitário é informado no momento da venda. Importante: vendas gravadas pelo painel gravam o lucro como valor numérico fixo; as linhas antigas usam fórmula. Se o valor for editado direto na planilha depois, aquela linha não recalcula sozinha, por isso o caminho recomendado de edição é sempre pelo painel.
+Lucro = Valor Total − (Quantidade × Custo Unitário). O custo unitário é informado no momento da venda e o lucro é gravado como valor numérico fixo.
 
 ---
 
@@ -146,7 +148,7 @@ Lucro = Valor Total − (Quantidade × Custo Unitário). O custo unitário é in
 
 Acesso pela URL https://n8n-wmtt.srv1830312.hstgr.cloud/webhook/olv-painel.
 
-O acesso agora é por login individual: cada pessoa tem usuário e senha próprios e um papel. A chave única OLV2026 foi removida.
+O acesso é por login individual: cada pessoa tem usuário e senha próprios e um papel. A chave única OLV2026 foi removida.
 
 ### Papéis
 
@@ -170,9 +172,8 @@ O acesso agora é por login individual: cada pessoa tem usuário e senha própri
 
 ## 8. CONVENÇÕES E CUIDADOS
 
-- Vendas e lançamentos são identificados pela posição da linha na planilha (row_number); depois de mexer manualmente na aba, recarregue o painel antes de editar ou excluir por ele.
+- Cada venda e cada lançamento é identificado por um ID próprio do banco, estável e independente da ordem em que aparecem na tela.
 - Os nomes de produto precisam bater exatamente (a comparação é sem diferenciar maiúsculas/minúsculas); por isso o produto é escolhido em menu suspenso.
-- O cadastro de clientes tem cerca de 226 nomes, mas a aba de vendas tem cerca de 2.078 variações de nome (erros de digitação históricos). Padronizar isso é uma oportunidade de melhoria.
 - O endpoint de leitura foi configurado com cabeçalho no-store e um parâmetro anti-cache, para o painel sempre puxar dados frescos após uma gravação.
 - **Custo do vendedor (pendência)**: o campo "Custo unitário" foi ocultado do vendedor. Enquanto a busca automática do último custo do produto não for implementada, as vendas lançadas por vendedores ficam sem custo, e o lucro dessas vendas fica igual ao valor. Vale priorizar essa melhoria ou reavaliar mostrar o campo.
 
@@ -192,7 +193,7 @@ Antes de cada etapa que mexe no painel, guardamos uma cópia da versão anterior
 
 ### 9.1 Fundação: Base de dados no Supabase (construção do zero) *
 
-**Status**: em andamento (iniciado em 25/07/2026). Mover a base de dados da planilha Google Sheets para o Supabase (banco de dados PostgreSQL), construindo o sistema do zero, sem trazer o histórico de vendas. A planilha continua existindo como arquivo de consulta.
+**Status**: em andamento (iniciado em 25/07/2026). Construir a base de dados do sistema no Supabase (PostgreSQL), do zero, sem trazer histórico de vendas.
 
 #### Andamento (concluído em 25/07/2026)
 
@@ -203,19 +204,9 @@ Antes de cada etapa que mexe no painel, guardamos uma cópia da versão anterior
 
 #### Falta
 
-- Importar os clientes (Google Contatos) e religar os fluxos de vendas e estoque para gravar no Supabase.
-
-#### Como fica organizado (as tabelas)
-
-No lugar de uma única aba com tudo, cada coisa vira uma tabela própria, ligada às outras por um código (ID):
-
-- **clientes**: nome, endereço, bairro e telefone, cada um com ID próprio.
-- **produtos**: nome padronizado, custo atual e estoque mínimo.
-- **vendas**: cada venda ligada ao cliente e ao produto pelo ID.
-- **pagamentos**: ligada à venda; permite uma venda com mais de uma forma de pagamento (por exemplo, o gás pago parte em dinheiro e parte no crédito).
-- **estoque**: movimentações de entrada, ajuste e estoque inicial, como já funciona hoje.
-- **contas a pagar e contas a receber**: base do módulo financeiro.
-- **anexos (Supabase Storage)**: boletos e comprovantes guardados junto das contas.
+- Especificar as colunas, tipos, chaves e índices de cada tabela (detalhar na seção 3).
+- Importar os clientes (Google Contatos), com limpeza e padronização de nomes antes de subir.
+- Religar os fluxos de vendas e estoque para gravar no Supabase.
 
 #### O que entra na abertura
 
@@ -225,9 +216,9 @@ No lugar de uma única aba com tudo, cada coisa vira uma tabela própria, ligada
 
 #### Por que fazer isso
 
-- Tira o receio de perder a planilha: o Supabase faz backup automático (no plano pago, com recuperação a um ponto no tempo).
-- As funções novas (pagamento múltiplo, histórico do cliente, financeiro integrado) são naturais em um banco de dados e ficam forçadas numa planilha.
-- A planilha original é preservada e a virada só acontece depois que você validar, então dá para voltar atrás.
+- Segurança dos dados: o Supabase faz backup automático (no plano pago, com recuperação a um ponto no tempo).
+- As funções novas (pagamento múltiplo, histórico do cliente, financeiro integrado) são naturais em um banco de dados relacional.
+- A virada só acontece depois que você validar, com ponto de retorno guardado.
 
 #### Domínio próprio
 
@@ -253,7 +244,7 @@ O painel passa a ter seis seções: Dashboard (métricas), Vendas, Estoque, Clie
 
 #### Cuidados
 
-- Performance: a base tem milhares de vendas; manter o carregamento leve (paginação, carregar só o necessário).
+- Performance: manter o carregamento leve conforme o volume cresce (paginação, carregar só o necessário).
 - Não quebrar os fluxos de gravação já validados ao trocar o visual.
 
 ### 9.3 Upgrade 2: Login para múltiplos usuários (concluído)
@@ -289,27 +280,22 @@ Adicionar um módulo financeiro ao painel, com duas seções: o que a empresa te
 
 #### Contas a receber
 
-- Aproveitar a aba Recebiveis que já existe na planilha, hoje fora do painel.
 - Puxar automaticamente as vendas com forma de pagamento "Em aberto" e "Crediario", que são recebíveis naturais.
-- Controlar por cliente, valor, vencimento e status (em aberto / recebido), com baixa de recebimento pelo painel.
+- Controlar por cliente, valor, vencimento e status (em aberto / recebido).
 - Baixa de recebimento pelo painel e alertas de vencimento enviados automaticamente no Telegram.
-
-**Atualização (25/07/2026)**: com a base no Supabase, os recebíveis passam a viver na tabela Contas a Receber; a aba Recebiveis da planilha deixa de ser usada.
 
 #### Contas a pagar
 
-- Nova aba "Contas a Pagar" (fornecedor, descrição, valor, vencimento, status, categoria).
+- Cadastro de contas com fornecedor, descrição, valor, vencimento, status e categoria.
 - Ligar com as entradas de estoque (compras de gás, água, etc.), aproveitando o custo já registrado.
 - Anexar boletos e comprovantes a cada conta, guardados no Supabase Storage.
 - Alertas de vencimento enviados automaticamente no Telegram.
 
 #### No painel
 
-- Nova seção "Financeiro" com sub-abas A Receber e A Pagar.
+- Duas seções próprias, Contas a Pagar e Contas a Receber (definido em 25/07/2026, no lugar de sub-abas de um único Financeiro).
 - Indicadores: total a vencer, total vencido, saldo projetado do período.
 - Alertas de vencimento e filtros por período e status.
-
-**Atualização (25/07/2026)**: as contas viram duas seções próprias no painel, Contas a Pagar e Contas a Receber, no lugar de sub-abas de um único Financeiro.
 
 #### Vendas e Clientes (ligados ao financeiro)
 
@@ -387,8 +373,8 @@ Estes pontos vêm da conversa "Diferença entre nota fiscal e cupom fiscal" e de
 | Ordem | Etapa | Por quê nessa posição |
 |-------|-------|----------------------|
 | 1º | Login multiusuário (concluído e no ar) | Base de segurança e de rastreio; pré-requisito para liberar o financeiro e o caixa com responsabilidade. |
-| 2º | Base de dados no Supabase (do zero), banco criado 25/07/2026 | Fundação nova; tira o risco de perder a planilha e sustenta as funções novas (pagamento múltiplo, histórico do cliente, financeiro integrado). Sem migração histórica. |
-| 3º | Contas a pagar e receber | Alto valor de negócio; usa dados que já existem (vendas em aberto, aba Recebiveis). |
+| 2º | Base de dados no Supabase (do zero), banco criado 25/07/2026 | Fundação nova; sustenta as funções novas (pagamento múltiplo, histórico do cliente, financeiro integrado) com backup automático. Sem migração histórica. |
+| 3º | Contas a pagar e receber | Alto valor de negócio; usa dados que o próprio sistema já gera (vendas em aberto e crediário). |
 | 4º | Controle de caixa | Fecha o ciclo financeiro do dia; usa vendas em dinheiro e pagamentos já registrados; precisa do operador (login). |
 | 5º | Novo formato do painel | Polimento visual e de navegação; absorve as novas seções (financeiro e caixa) já prontas. |
 | 6º | Módulo fiscal via API | Visão de futuro; o certificado já existe. Depende de gerar o CSC na SEFAZ-ES, do cadastro fiscal dos produtos (ST no gás) e da integração com o provedor (NFe.io). |
@@ -396,7 +382,7 @@ Estes pontos vêm da conversa "Diferença entre nota fiscal e cupom fiscal" e de
 **Decisões a fechar quando chegarmos em cada etapa:**
 
 - Login: opção A ou B; quais pessoas e (se A) quais papéis. **RESOLVIDO: Opção A, Rogério e Gabriele administradores, Vendedor vendedor.**
-- Financeiro: usar a aba Recebiveis como está ou reestruturar; quais categorias de contas a pagar.
+- Financeiro: quais categorias de contas a pagar.
 - Caixa: um caixa único ou um por operador; o que entra como sangria e reforço; como tratar diferenças no fechamento.
 - Fiscal: confirmar ST do gás e tratamento do vasilhame com o contador; gerar o CSC na SEFAZ-ES; resolver o cadastro da inscrição estadual no provedor (NFe.io).
 - Formato: estilo de navegação (abas no topo x menu inferior) e se vira atalho/app na tela inicial.
@@ -405,21 +391,10 @@ Estes pontos vêm da conversa "Diferença entre nota fiscal e cupom fiscal" e de
 
 ## 11. REFERÊNCIAS RÁPIDAS
 
-### Abas da planilha (função no painel)
-
-| Aba | Papel no painel |
-|-----|-----------------|
-| Vendas Geral | Registro de todas as vendas. É a base do painel de vendas e do abatimento de estoque. |
-| Clientes | Cadastro de clientes (nome, endereço, bairro, telefone). Alimenta o autocompletar. |
-| Estoque | Movimentações de estoque (entradas, ajustes, contagem inicial). |
-| Recebiveis | Aba já existente, ainda não usada pelo painel. Base natural para o módulo financeiro. |
-| Resumo Mensal / Dashboard / etc. | Abas de análise da própria planilha, fora do escopo do painel. |
-
-### Infraestrutura (referência rápida)
+### Infraestrutura
 
 | Item | Valor |
 |------|-------|
-| Planilha | Vendas_OLV Distribuidora (Google Sheets) |
 | URL do painel | https://n8n-wmtt.srv1830312.hstgr.cloud/webhook/olv-painel |
 | Autenticação | Login por usuário e senha, com papéis (administrador e vendedor). Token de sessão de 12h. Chave única OLV2026 removida. |
 | Instância n8n | n8n-wmtt.srv1830312.hstgr.cloud |
@@ -430,10 +405,79 @@ Estes pontos vêm da conversa "Diferença entre nota fiscal e cupom fiscal" e de
 | Workflow de contas | OLV Contas (gestão de usuários; só administrador) |
 | Tabelas internas do n8n | OLV Usuarios (usuários e papéis) e OLV Painel HTML (HTML do painel em base64) |
 | Pontos de restauração (v1.4) | Painel 63bf15bb; Vendas 348ed17a; Estoque 2adfcba0 |
-| Banco de dados | Supabase (PostgreSQL), projeto olv-distribuidora, região São Paulo. 7 tabelas criadas em 25/07/2026, RLS ativa. Sem migração histórica; a planilha vira arquivo de consulta. |
+| Banco de dados | Supabase (PostgreSQL), projeto olv-distribuidora, região São Paulo. 7 tabelas criadas em 25/07/2026, RLS ativa. Sem migração histórica. |
 | Domínio do painel | olvdistribuidora.com.br (Registro.br). Endereço planejado: painel.olvdistribuidora.com.br. DNS pendente. |
 | Fonte de clientes | Google Contatos (nome e endereço), com limpeza antes de importar. |
 | Conexão n8n → Supabase | Session Pooler (IPv4). Host aws-0-sa-east-1.pooler.supabase.com, porta 5432, base postgres, usuário postgres.ggvfrnympdrqyqxgcyex, SSL ativo. Credencial no n8n: "Supabase OLV". (A senha fica guardada só no n8n.) |
+
+---
+
+## 12. GUIA DE MODELOS POR ETAPA *
+
+Criado em 26/07/2026. Define qual modelo de IA usar em cada tipo de tarefa do projeto, para reduzir consumo sem aumentar risco.
+
+### 12.1 Os modelos disponíveis
+
+Um modelo de IA funciona como um profissional contratado por hora. O mais experiente resolve problema difícil com menos erro, mas custa mais caro por hora. O mais rápido resolve tarefa repetitiva por uma fração do preço. Contratar o sênior para arquivar papel é desperdício; contratar o júnior para desenhar a fundação da casa é risco.
+
+| Modelo | Perfil | Uso no projeto |
+|--------|--------|----------------|
+| Haiku 4.5 | Rápido e econômico | Tarefa repetitiva e automação rodando dentro do n8n |
+| Sonnet 5 | Equilíbrio entre custo e capacidade | Execução do que já foi especificado |
+| Opus 5 | Raciocínio profundo e contexto longo | Decisão estrutural, regra de negócio, segurança |
+| Fable 5 | Topo de linha da Anthropic | Reserva, só se o Opus 5 travar em algo específico |
+
+### 12.2 Regra de acionamento
+
+O gatilho é o tipo de tarefa, não uma avaliação caso a caso:
+
+- **Opus 5**: quando a decisão é difícil de desfazer (esquema de banco, regra financeira, segurança, autenticação), quando exige cruzar várias seções deste documento, ou quando é planejamento de etapa.
+- **Sonnet 5**: quando o "o quê" já está definido e falta o "como" (escrever SQL já especificado, ajustar nó do n8n, montar tela, revisar texto, depurar erro pontual).
+- **Haiku 4.5**: tarefa repetitiva, classificação simples, e qualquer chamada de IA que rode dentro de fluxo em produção, onde custo por chamada e velocidade pesam mais que profundidade.
+
+### 12.3 Modelo indicado por etapa
+
+| Etapa | Tarefa | Modelo | Por quê |
+|-------|--------|--------|---------|
+| 9.1 Supabase | Desenho do esquema (tabelas, colunas, chaves, índices, RLS) | Opus 5 | Erro aqui só aparece meses depois |
+| 9.1 Supabase | Escrever e aplicar o SQL já especificado | Sonnet 5 | Execução de escopo fechado |
+| 9.1 Supabase | Lógica de limpeza e padronização dos nomes de clientes | Opus 5 | Agrupar nomes parecidos sem juntar clientes diferentes |
+| 9.1 Supabase | Rodar o script de limpeza e revisar a lista | Sonnet 5 | Trabalho mecânico |
+| 9.1 Supabase | Plano de virada e ponto de retorno | Opus 5 | Risco alto, muitas dependências |
+| 9.1 Supabase | Religar os fluxos n8n: desenho | Opus 5 | Muda o contrato dos 5 workflows ao mesmo tempo |
+| 9.1 Supabase | Religar os fluxos n8n: aplicação nó a nó | Sonnet 5 | Repetitivo |
+| 9.2 Novo painel | Arquitetura de navegação e performance | Opus 5 | Decisão estrutural |
+| 9.2 Novo painel | Telas, estilo, componentes | Sonnet 5 | Execução visual |
+| 9.4 Financeiro | Regras, casos de borda e pagamento múltiplo | Opus 5 | Regra errada gera número errado |
+| 9.4 Financeiro | Telas e operações de cadastro | Sonnet 5 | Padrão conhecido |
+| 9.5 Caixa | Regras de abertura, sangria e fechamento | Opus 5 | Envolve conferência e responsabilidade |
+| 9.5 Caixa | Telas e histórico | Sonnet 5 | Execução |
+| 9.6 Fiscal | Mapeamento fiscal e desenho da integração | Opus 5 | Alto risco, exige marcar pendência em vez de supor |
+| 9.6 Fiscal | Testes de chamada da API | Sonnet 5 | Tentativa e erro controlado |
+| Documento | Merge, revisão cruzada, mudança de versão | Opus 5 | Documento longo com regras próprias |
+| Documento | Ajuste de texto e tabela | Sonnet 5 | Edição pontual |
+
+**Regra fixa**: nada do módulo fiscal vai para produção sem validação do contador, independentemente do modelo usado.
+
+### 12.4 Como o Claude vai avisar
+
+Ao iniciar qualquer tarefa do projeto, a primeira linha da resposta traz:
+
+> **Modelo indicado: [X]. Motivo: [tipo de tarefa].**
+
+Quando o modelo em uso for mais pesado que o necessário, o aviso é explícito:
+
+> **Você está no Opus 5, mas esta tarefa roda bem no Sonnet 5. Se quiser economizar, abra uma conversa nova no Sonnet com este trecho.**
+
+### 12.5 Limites desta prática
+
+Registrado para não criar expectativa errada:
+
+- O Claude **não troca de modelo sozinho**. A troca é manual, no seletor da interface.
+- Trocar de modelo no meio da conversa **carrega todo o histórico** para o novo modelo. A economia é parcial.
+- A economia maior vem de **abrir conversa nova e curta** no modelo leve, com só o trecho necessário deste documento.
+- O aviso do modelo é baseado em **regra escrita** (tipo de tarefa), não em autoavaliação do Claude, que não é confiável para julgar a própria necessidade.
+- **Pendência**: dividir este documento em um núcleo enxuto (estado atual, arquitetura, decisões, referências) mais anexos por etapa, carregados só quando a etapa estiver em execução. É a economia estrutural, maior que a troca de modelo. Sugerido para depois da virada do Supabase.
 
 ---
 
@@ -442,3 +486,5 @@ Estes pontos vêm da conversa "Diferença entre nota fiscal e cupom fiscal" e de
 | Data | Versão | Mudança |
 |------|--------|---------|
 | 25/07/2026 | 1.6 | Documento criado em .md; estrutura de atualização definida; login multiusuário implementado; banco Supabase criado; decisão tomada de construção do zero sem migração de histórico. |
+| 26/07/2026 | 1.7 | Criada a seção 12, Guia de Modelos por Etapa, com regra de acionamento, modelo indicado por tarefa e protocolo de aviso no início de cada tarefa. Incluída a regra 6 nas Instruções para Claude. |
+| 26/07/2026 | 1.8 | Removidas todas as referências à base anterior em planilha, conforme a decisão de sistema independente. A antiga seção 3 (estrutura da planilha) foi substituída pela seção 3, Estrutura de Dados (Supabase). Ajustadas as seções 1, 2, 2.1, 4, 5.1, 6, 8, 9.1, 9.4, 10, 11 e 12.3. |
