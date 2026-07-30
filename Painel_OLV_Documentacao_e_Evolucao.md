@@ -3,7 +3,7 @@
 
 **Documentação do funcionamento e plano de evolução**
 
-Versão 3.1 · 30/07/2026
+Versão 3.2 · 30/07/2026
 Preparado para Rogério
 
 ---
@@ -29,7 +29,7 @@ O projeto é um painel operacional da OLV Distribuidora que roda no navegador, c
 
 O objetivo é dar autonomia para lançar e consultar o dia a dia do negócio em um só lugar, com cálculos automáticos de lucro e de saldo de estoque, sem depender de aplicativo instalado.
 
-**Estado atual**: existe uma versão do painel, acessível pela web, ainda operando sobre a base anterior. Desde 25/07/2026 o acesso é por login individual com papéis. O painel novo, sobre o Supabase, está em construção e roda em paralelo até a virada. Os quatro endpoints do painel novo foram construídos em 30/07/2026 e estão desativados.
+**Estado atual**: existe uma versão do painel, acessível pela web, ainda operando sobre a base anterior. Desde 25/07/2026 o acesso é por login individual com papéis. O painel novo, sobre o Supabase, foi construído e publicado em 30/07/2026 em https://painel.olvdistribuidora.com.br (Cloudflare Workers), rodando em paralelo ao painel antigo até a virada. Os quatro endpoints do painel novo, construídos em 30/07/2026, foram ativados no mesmo dia.
 
 **Decisão de 25/07/2026**: o sistema é construído do zero sobre o Supabase (PostgreSQL). Não há migração de dados antigos: o sistema começa vazio e vai sendo preenchido pelo uso, com apenas clientes, produtos e usuários inseridos na abertura.
 
@@ -47,7 +47,7 @@ O painel funciona 24/7 mesmo com o computador desligado. As dependências são o
 
 **Regra de arquitetura (29/07/2026)**: **o navegador nunca fala direto com o Supabase.** Toda leitura e gravação passa pelo n8n, que é onde a permissão é validada. Ver seções 3.10 e 8.
 
-**Status em 30/07/2026**: conexão n8n para Supabase ativa e testada. Esquema do banco concluído. Endpoints do painel novo construídos e desativados. Religação dos fluxos antigos é a pendência aberta da seção 9.1.
+**Status em 30/07/2026**: conexão n8n para Supabase ativa e testada. Esquema do banco concluído. Endpoints do painel novo construídos e ativados. Painel novo publicado e testado ponta a ponta (login, leitura e telas). Religação dos fluxos antigos e aposentadoria do painel atual seguem como pendência aberta da seção 9.1.
 
 ### 2.1 Camada de login e usuários
 
@@ -57,7 +57,7 @@ O painel funciona 24/7 mesmo com o computador desligado. As dependências são o
 
 **Fluxo de Contas ("OLV Contas")**: cria usuário, troca senha, lista, muda papel e ativa/desativa acessos. Ações de administração exigem papel de administrador.
 
-**HTML do painel**: hoje fica codificado em base64 numa Data Table chamada "OLV Painel HTML". **Isso muda na Fase 1** (ver 9.2): o HTML novo nasce como arquivo versionado no repositório, e a Data Table passa a ser só o lugar de onde o n8n serve.
+**HTML do painel**: hoje fica codificado em base64 numa Data Table chamada "OLV Painel HTML", para o painel antigo. **O painel novo já nasceu diferente** (ver 9.2): é um arquivo HTML único, versionado e editável, publicado direto no Cloudflare Workers, sem passar pela Data Table.
 
 **Os endpoints do painel novo usam o mesmo token e o mesmo segredo do OLV Login.** Quem entra no painel antigo entra no novo com o mesmo crachá, o que permite testar em paralelo sem criar segunda camada de acesso.
 
@@ -90,6 +90,8 @@ Cada assunto vive em uma tabela própria, ligada às outras por um código (ID).
 **Trava de duplicidade**: o banco cria sozinho uma versão do telefone só com números e não permite dois clientes com o mesmo. Assim "(27) 99999-8888" e "27999998888" são o mesmo contato.
 
 Dois limites aceitos: cliente sem telefone não é protegido, porque o banco não tem como saber se é a mesma pessoa; e telefone compartilhado bloqueia o segundo cadastro, o que na prática costuma ser o mesmo cliente de entrega.
+
+**Pendência nova (30/07/2026)**: o endpoint `olv2-dados` (ação `tudo`) não inclui `telefone_norm` na consulta de clientes, só `telefone`. A busca por telefone no painel novo foi ajustada para extrair os dígitos do campo `telefone` no próprio navegador, e funciona, mas o ideal é o endpoint passar a devolver `telefone_norm` pronto, evitando esse trabalho duplicado no cliente.
 
 ### 3.2 produtos
 
@@ -303,6 +305,7 @@ Regras que o banco garante sozinho, independente de quem grave:
 | 10 | **Lucro por item ignora o desconto** | Contornado pela view `vw_pedidos`. Se um dia o desconto precisar ser rateado item a item, é aqui |
 | 13 | **Excluir ou editar movimentação de estoque não desfaz o custo médio** | Descoberto em 30/07/2026. O gatilho `trg_custo_produto` dispara **só no INSERT**. Apagar uma Entrada devolve a quantidade ao saldo, mas deixa o `custo_atual` num valor que nenhuma compra real justifica, e o erro é invisível na tela. Por isso o endpoint de estoque **não tem exclusão**: correção se faz por Ajuste, que deixa rastro. Resolver exige recálculo no banco |
 | 14 | **Gratuidade combinada com Crediário gera recebível com valor cheio** | Descoberto em 30/07/2026 na leitura da `registrar_venda`. A função zera `pagamentos.valor` mas insere o valor original em `contas_receber`. Só aparece nessa combinação. Nada foi alterado |
+| 15 | **Endpoint `olv2-dados` não devolve `telefone_norm`** | Descoberto em 30/07/2026. A consulta de clientes seleciona `telefone`, não `telefone_norm`. O painel novo contorna extraindo os dígitos no navegador; o ideal é o endpoint devolver o campo pronto |
 
 A numeração 11 e 12 fica na seção 8.3, porque são pendências de segurança. A série é única.
 
@@ -322,7 +325,7 @@ A numeração 11 e 12 fica na seção 8.3, porque são pendências de segurança
 
 ### 4.2 Do painel novo, sobre o Supabase (construídos em 30/07/2026)
 
-Prefixo OLV2 para não haver confusão com o conjunto em produção. **Todos desativados**, aguardando a Fase 1.
+Prefixo OLV2 para não haver confusão com o conjunto em produção. **Ativados em 30/07/2026**, junto com a correção de CORS descrita na seção 9.2. O painel antigo continua intocado e no ar; os dois conjuntos rodam em paralelo até a virada.
 
 | Workflow | Endpoint | Ações |
 |---|---|---|
@@ -340,6 +343,8 @@ Prefixo OLV2 para não haver confusão com o conjunto em produção. **Todos des
 **A permissão de dono é conferida dentro da própria instrução de gravação**, não num nó separado que lê antes e grava depois. Assim não existe janela entre conferir e gravar. Quando o pedido não é encontrado ou o usuário não é o responsável, a resposta é a mesma mensagem, e nada é alterado.
 
 **Testado contra o banco real em 30/07/2026**, com limpeza conferida depois: pedido completo com recebível, reenvio com a mesma chave devolvendo `repetido` sem duplicar, edição bloqueada para quem não é dono e liberada para o dono, e cliente duplicado barrado com o nome do cliente já cadastrado na mensagem.
+
+**Correção de CORS em 30/07/2026**: nenhum dos cinco webhooks usados pelo painel novo (OLV Login e os quatro OLV2) tinha a opção `allowedOrigins` configurada no nó de webhook. Sem isso, o navegador bloqueava toda chamada feita a partir de `https://painel.olvdistribuidora.com.br`, mesmo com o restante do fluxo correto. Corrigido nó a nó, liberando essa origem específica (não `*`), e publicado em cada um dos cinco workflows. Detalhe completo na seção 9.2.
 
 **Pendente**: os fluxos em produção ainda leem e gravam na base anterior, e continuam intocados. A virada só acontece na validação da Fase 1, e o conjunto antigo permanece como ponto de retorno.
 
@@ -551,13 +556,13 @@ Ciclo de cada etapa: definir o escopo, implementar sem afetar o que funciona, te
 - 30/07: **modelo de pedido com itens**, 8 formas de pagamento, recebíveis automáticos, custo médio ponderado, função `registrar_venda`, travas de consistência e as duas views. Tudo testado com casos de borda e o banco limpo depois.
 - 30/07: **6 produtos cadastrados** com custo e estoque mínimo.
 - 30/07: **910 clientes importados**, conferidos sem campo vazio, sem telefone inválido e com 910 telefones únicos.
-- 30/07: **quatro endpoints do painel novo construídos e desativados**, testados contra o banco real com limpeza conferida. Ver seção 4.2.
+- 30/07: **quatro endpoints do painel novo construídos**, testados contra o banco real com limpeza conferida. Ver seção 4.2.
+- 30/07: **painel novo ligado aos quatro endpoints e ao login**, testado com login real, leitura de dados e as telas de Vendas, Estoque, Clientes e Dashboard. Publicado em https://painel.olvdistribuidora.com.br.
+- 30/07: **DNS de painel.olvdistribuidora.com.br configurado** no Cloudflare (nameservers apontados, domínio anexado ao Worker como Custom Domain), confirmado no ar respondendo por esse endereço.
 
 #### Falta
 
-- Ligar o painel novo aos endpoints novos, na Fase 1.
 - Fazer a virada e aposentar os fluxos antigos, com a sua aprovação.
-- Configurar o DNS de painel.olvdistribuidora.com.br no Registro.br.
 
 #### A importação de clientes (30/07/2026)
 
@@ -579,13 +584,13 @@ Textos que estavam no campo de bairro mas não são bairro, como "Supergasbras" 
 
 ### 9.2 Fase 1: Painel operacional novo *
 
-**Status**: simulação visual aprovada em 30/07/2026. **Endpoints construídos e desativados em 30/07/2026.** Falta o painel em si.
+**Status**: painel construído e publicado em 30/07/2026 em https://painel.olvdistribuidora.com.br (Cloudflare Workers), rodando em paralelo ao painel antigo. Login e as quatro telas (Dashboard, Vendas, Estoque, Clientes) testadas contra os endpoints reais. **Falta a virada final e a aposentadoria do painel antigo**, que depende da sua aprovação.
 
-**Decisão de 30/07/2026**: o painel não será adaptado, será **reescrito**. Adaptar o HTML atual, com 878 linhas em base64 dentro de uma Data Table, ao formato novo de dados custaria mais que escrever do zero, e sem ganho.
+**Decisão de 30/07/2026**: o painel não foi adaptado, foi **reescrito**. Adaptar o HTML atual, com 878 linhas em base64 dentro de uma Data Table, ao formato novo de dados custaria mais que escrever do zero, e sem ganho.
 
-**O HTML novo nasce como arquivo versionado no repositório**, editável e comparável. A Data Table continua sendo só o lugar de onde o n8n serve, alimentada por um processo de publicação. Motivo: hoje custa meia dúzia de etapas para trocar seis palavras, e o incidente da seção 8.2 aconteceu em parte porque ninguém enxergava o arquivo com facilidade.
+**O HTML novo nasceu como arquivo único**, editável e comparável, publicado direto no Cloudflare Workers (não passa pela Data Table do n8n).
 
-**Construção em paralelo**: o painel atual continua no ar e intocado, operando o dia a dia. O novo é construído em endpoints separados. A virada só acontece na sua aprovação, e o antigo permanece como ponto de retorno.
+**Construção em paralelo**: o painel atual continua no ar e intocado, operando o dia a dia. O novo roda em endpoints separados. A virada só acontece na sua aprovação, e o antigo permanece como ponto de retorno.
 
 #### Endpoints: as seis decisões aprovadas em 30/07/2026
 
@@ -604,15 +609,19 @@ Menu lateral em três grupos, com botão de recolher: Operação (Dashboard, Ven
 
 #### Dashboard (aprovado em 30/07/2026)
 
-Filtros de período no topo. Quatro indicadores principais: **Itens vendidos, Faturamento, Lucro e Nº de vendas**, com média por dia, margem e ticket, e **comparação com o período anterior** em cada um. Essa comparação é o ganho sobre o painel antigo, que mostrava o número sem dizer se estava melhor ou pior.
+Filtros de período no topo, ao lado do título. Quatro indicadores principais: **Itens vendidos, Faturamento, Lucro e Nº de vendas**, com margem do período e **comparação com o período anterior** em cada um. Essa comparação é o ganho sobre o painel antigo, que mostrava o número sem dizer se estava melhor ou pior.
 
-Abaixo: gráfico de linha com quantidade e valor por dia, comparados ao mês anterior em linha tracejada; lista "Atenção hoje"; quantidade por produto; valores por forma de pagamento; e movimentos prioritários.
+**Construído em 30/07/2026**: os quatro indicadores comparados, a margem do período e a lista de quantidade por produto.
+
+**Falta, não estava no escopo fechado**: gráfico de linha com quantidade e valor por dia comparado ao mês anterior, lista "Atenção hoje", valores por forma de pagamento e movimentos prioritários. Fica como pendência em aberto, sem data definida.
 
 **Exclusivo do administrador.** Indicadores de pré-pagos, a receber e saldo vivem nas suas próprias seções, não no Dashboard.
 
 #### Vendas: quadro de operação
 
-Quatro abas com roteamento onde cada pedido aparece em uma só: Aguardando (não concluído, não pré-pago), Pré-pagos (pago e não resgatado), Em rota, Concluídos (dia atual por padrão). Tipo Entrega ou Retirada aparece como marca visual, não como aba. Botão de mudança rápida de status com um toque.
+**Redesenhado em 30/07/2026**: as quatro situações (Aguardando, Pré-pagos, Em rota, Concluídos) aparecem **ao mesmo tempo, em colunas lado a lado**, no lugar das abas originalmente aprovadas. Mudar a situação de um pedido move o cartão de coluna, sem esconder da tela. Motivo: com abas, o pedido "sumia" da vista ao mudar de situação, e só reaparecia entrando na aba de destino, o que não correspondia ao uso real do dia a dia.
+
+Roteamento de cada pedido para uma única coluna: Aguardando (não concluído, não pré-pago), Pré-pagos (pago e não resgatado), Em rota, Concluídos (dia atual por padrão, com filtro de período próprio no topo da página). Tipo Entrega ou Retirada aparece como marca visual, não como coluna. Botão de mudança rápida de situação com um toque.
 
 Indicadores da seção: pedidos hoje, aguardando, em rota e pré-pagos a entregar.
 
@@ -627,11 +636,31 @@ Quatro blocos mais "Mais opções" recolhido:
 3. **Entrega**: tipo, situação inicial e interruptor de pré-pago. Escolher Retirada some com a opção "Em rota".
 4. **Pagamento**: começa com uma linha preenchida com o total. "Dividir pagamento" adiciona linha com o restante. Faixa mostra **"Falta alocar"** em âmbar e vira verde quando zera; o botão Salvar fica desabilitado até lá. Crediário abre campo de vencimento obrigatório; Em aberto vem preenchido com 3 dias, editável.
 
-**O painel deve enviar uma `idempotency_key` própria em cada pedido novo.** É o que faz o toque duplo devolver o mesmo pedido em vez de criar dois. Testado em 30/07/2026.
+**O painel envia uma `idempotency_key` própria em cada pedido novo.** É o que faz o toque duplo devolver o mesmo pedido em vez de criar dois. Testado em 30/07/2026.
+
+**Ajuste de 30/07/2026**: ordem de navegação por Tab corrigida. Os botões de ação dentro do formulário (remover item, adicionar item, dividir pagamento, trocar cliente) foram tirados da sequência de Tab, para o teclado avançar direto de campo em campo.
 
 #### Estoque
 
 Indicadores, tabela de produtos com situação, e **histórico de movimentações** com filtro por tipo, mostrando a saída automática por venda concluída como lançamento do sistema. Sem botão de excluir movimentação, pelo motivo da pendência 13.
+
+#### Clientes
+
+Busca por nome ou telefone, cadastro e edição. Sem histórico de pedidos por cliente nem indicadores, porque dependem de consultas que ainda não existem, previstas na seção 9.4.
+
+**Ajuste de 30/07/2026**: a busca por telefone usava um campo (`telefone_norm`) que o endpoint não devolve. Corrigido para extrair os dígitos do campo `telefone`, que existe na resposta. Ver pendência 15 na seção 3.11.
+
+#### Correção de CORS (30/07/2026)
+
+Ao publicar o painel no domínio final, o navegador bloqueava toda chamada aos cinco webhooks (OLV Login e os quatro OLV2), porque nenhum tinha a opção `allowedOrigins` configurada. O sintoma era a chamada travando antes de chegar ao servidor. Corrigido liberando `https://painel.olvdistribuidora.com.br` especificamente (não `*`) em cada um dos cinco nós de webhook, com publicação de cada workflow. Verificado com chamada real ao `olv2-dados` retornando 200 sem bloqueio.
+
+#### Outros ajustes visuais (30/07/2026)
+
+Ícones próprios para cada item do menu lateral, no lugar de um marcador genérico. Tela inicial após o login passa a ser o Dashboard para administrador, e Vendas para os demais papéis (antes era sempre Vendas).
+
+#### Pendência nova: cores da marca
+
+Os tons de azul-marinho, azul-médio, verde, amarelo e vermelho usados no painel são valores de trabalho, escolhidos sem referência oficial. O Painel_OLV_Visual.md pede "azul-marinho da OLV" sem informar o hex exato. Falta confirmar ou substituir pelos códigos oficiais da marca.
 
 #### Cuidados
 
@@ -653,7 +682,7 @@ Duas seções próprias no painel, não sub-abas de um Financeiro único.
 
 **A pagar**: cadastro com fornecedor, descrição, valor, vencimento, status e categoria; ligação com as entradas de estoque, aproveitando o custo e o fornecedor já registrados; anexo de boletos no Storage; alertas no Telegram.
 
-**Clientes**: seção própria com cadastro, edição e histórico de pedidos por cliente. O endpoint de manutenção de clientes já existe desde 30/07/2026.
+**Clientes**: histórico de pedidos por cliente e indicadores. O endpoint de manutenção de clientes já existe desde 30/07/2026; falta a consulta de histórico.
 
 ### 9.5 Fase 2: Controle de caixa *
 
@@ -712,8 +741,8 @@ Separar duas coisas hoje misturadas:
 | Ordem | Etapa | Situação |
 |---|---|---|
 | 1º | Login multiusuário | Concluído e no ar |
-| 2º | Base de dados no Supabase | Esquema, produtos e clientes concluídos. Endpoints do painel novo construídos e desativados |
-| 3º | **Fase 1: painel operacional novo** | Endpoints prontos. Falta o painel e a virada |
+| 2º | Base de dados no Supabase | Esquema, produtos, clientes e endpoints do painel novo concluídos e ativados |
+| 3º | **Fase 1: painel operacional novo** | Painel construído e publicado em painel.olvdistribuidora.com.br, em teste real com dados reais. Falta a virada final e aposentar o painel antigo |
 | 4º | Setores e permissões | Depois da virada, antes do financeiro, para os endpoints já nascerem com validação |
 | 5º | Contas a pagar e receber | Fase 2 |
 | 6º | Controle de caixa | Fase 2 |
@@ -728,6 +757,7 @@ Separar duas coisas hoje misturadas:
 - Financeiro: categorias de contas a pagar.
 - Caixa: único ou por operador; o que entra como sangria e reforço; como tratar diferenças no fechamento.
 - Fiscal: ST do gás e vasilhame com o contador; CSC na SEFAZ-ES; inscrição estadual no provedor.
+- Cores oficiais da marca, para substituir os valores de trabalho do painel novo.
 
 ---
 
@@ -735,17 +765,18 @@ Separar duas coisas hoje misturadas:
 
 | Item | Valor |
 |---|---|
-| URL do painel | https://n8n-wmtt.srv1830312.hstgr.cloud/webhook/olv-painel |
+| URL do painel (antigo, em produção) | https://n8n-wmtt.srv1830312.hstgr.cloud/webhook/olv-painel |
+| URL do painel novo | https://painel.olvdistribuidora.com.br, publicado no Cloudflare Workers desde 30/07/2026 |
 | Autenticação | Login com papéis (administrador e colaborador), token de 12h |
 | Instância n8n | n8n-wmtt.srv1830312.hstgr.cloud |
 | Workflows em produção | OLV Painel Mobile (web), OLV Vendas, OLV Estoque, OLV Login, OLV Contas |
-| Workflows do painel novo | OLV2 Dados, OLV2 Pedido, OLV2 Estoque, OLV2 Clientes. Todos desativados |
+| Workflows do painel novo | OLV2 Dados, OLV2 Pedido, OLV2 Estoque, OLV2 Clientes. Todos ativos desde 30/07/2026 |
 | Tabelas internas do n8n | OLV Usuarios e OLV Painel HTML |
 | Pontos de restauração (v1.4) | Painel 63bf15bb; Vendas 348ed17a; Estoque 2adfcba0 |
 | Identificadores dos workflows novos (v3.1) | Dados fi2DPaA6qL7MxwIV; Pedido aPr6vx4oesVfkLis; Estoque 3l15lOfGCeYqLEu7; Clientes ClsDIM8jVRB5fijC |
 | Banco de dados | Supabase PostgreSQL 17, projeto olv-distribuidora_sistema, região São Paulo. 8 tabelas, 2 views, RLS ativa |
 | Conexão n8n para Supabase | Session Pooler IPv4, host aws-0-sa-east-1.pooler.supabase.com, porta 5432, base postgres, usuário postgres.ggvfrnympdrqyqxgcyex, SSL ativo. Credencial "Supabase OLV" |
-| Domínio | olvdistribuidora.com.br no Registro.br. Endereço planejado painel.olvdistribuidora.com.br. DNS pendente |
+| Domínio | olvdistribuidora.com.br no Registro.br. painel.olvdistribuidora.com.br configurado no Cloudflare e no ar desde 30/07/2026 |
 | Fonte de clientes | Google Contatos, 910 importados |
 | Documento oficial | GitHub rogeriosandre/olv-distribuidora, Painel_OLV_Documentacao_e_Evolucao.md |
 | Documento visual | Painel_OLV_Visual.md, no mesmo repositório |
@@ -834,3 +865,4 @@ Primeira linha da resposta: **Modelo indicado: [X]. Motivo: [tipo de tarefa].** 
 | 29/07/2026 | 2.9 | Restaurada a v2.8, sobrescrita em 28/07 por um commit que partiu da v1.6 recebida em cache. Incorporada a renomeação aplicada no sistema. Documentado o mecanismo de ocultação financeira. Registrado o incidente do nó Montar Payload, que expôs lucro e custo ao colaborador por 16 horas, e sua correção. Criada a etapa de setores e a regra de conferência de versão. |
 | 30/07/2026 | 3.0 | **Reestruturação do pedido e fundação de dados concluída.** (a) Criada a tabela `venda_itens`: a venda deixou de ser uma linha por produto e virou um pedido com vários itens, com custo e lucro por item. `produto_id`, `quantidade` e `custo_unitario` saíram de `vendas`, que ganhou `desconto` e `idempotency_key`. (b) Definidas as 8 formas de pagamento em lista fechada, com a regra de recebível por linha de pagamento e o tratamento da Gratuidade, que zera o pedido. (c) Criada a função `registrar_venda`, que grava pedido, itens, pagamentos e recebíveis numa transação só, encerrando as pendências 1 e 4. (d) Criadas as travas de consistência do pedido, adiadas para o fim da transação. (e) `contas_receber` ganhou `pagamento_id` e cascata, encerrando a pendência 8. (f) Custo do produto passou a nascer da entrada de estoque, por média ponderada, com o custo da última compra visível ao lado; `estoque_movimentacoes` ganhou custo e fornecedor. (g) `vw_estoque_atual` reconstruída: abatia estoque na data do pedido em vez da conclusão, contrariando a regra da seção 6. (h) Criada `vw_pedidos`, que calcula lucro e margem já com o desconto, corrigindo distorção descoberta nos testes. (i) 6 produtos cadastrados e 910 clientes preparados a partir de 1.598 contatos, com 24 bairros padronizados. (j) Simulação visual do painel novo aprovada, com Dashboard exclusivo do administrador e o indicador de ticket médio removido, encerrando a pendência 12. (k) Decidido reescrever o HTML do painel como arquivo versionado, em construção paralela ao painel atual. |
 | 30/07/2026 | 3.1 | **Endpoints do painel novo construídos e desativados (tarefa 4).** (a) Criados os quatro workflows OLV2, com bloco de autenticação idêntico, permissão positiva sobre `admin` e nó Crypto com `type` e `encoding` fixados desde o rascunho. Seção 4.2. (b) Registradas as seis decisões de desenho aprovadas, incluindo itens do pedido por segunda consulta e a divisão da edição de pedido em `criar`, `status`, `editar_leve` e `excluir`. Seção 9.2. (c) Nova convenção 8.4: toda gravação viaja como um único parâmetro em base64, porque o nó Postgres separa parâmetros por vírgula e texto livre tem vírgula. Fecha também a porta para injeção de SQL. (d) Nova regra de permissão na seção 7: Entrada e Estoque Inicial exclusivos do administrador, porque alimentam o custo médio; Ajuste liberado a qualquer usuário ativo. (e) Pendência 13 criada: o gatilho de custo dispara só no INSERT, então excluir movimentação não desfaz o custo médio; por isso não existe exclusão no endpoint de estoque. (f) Pendência 14 criada: Gratuidade combinada com Crediário grava recebível com o valor cheio. (g) Pendência 11 reduzida e detalhada: totais agregados deixam de ser calculados para quem não é admin, e ficou decidida a direção de entregar valor apenas dos pedidos em rota atribuídos ao colaborador, para executar na etapa 9.7. (h) Endpoint de leitura nasceu com duas ações em vez de cinco, por peso no celular. (i) Registrado que `responsavel` guarda quem lançou, não quem entrega, e que não existe campo de entregador. |
+| 30/07/2026 | 3.2 | **Painel novo construído, publicado e ligado aos endpoints; workflows OLV2 ativados.** (a) `index.html` do painel novo escrito e publicado em https://painel.olvdistribuidora.com.br via Cloudflare Workers (Cloudflare Drop, domínio próprio anexado). (b) Corrigido bloqueio de CORS nos cinco webhooks usados pelo painel (OLV Login e os quatro OLV2): nenhum tinha `allowedOrigins` configurado, o que impedia qualquer chamada do navegador a partir do domínio novo. Corrigido nó a nó e publicado; os quatro workflows OLV2 saíram de desativados para ativos. (c) Quadro de Vendas redesenhado: as quatro situações passam a aparecer em colunas simultâneas, no lugar de abas que escondiam as demais ao trocar de situação. (d) Filtro de período (Dashboard e Concluídos) movido para o topo da página, ao lado do título. (e) Corrigida busca de cliente por telefone: usava o campo `telefone_norm`, que o endpoint `olv2-dados` não devolve; passou a extrair os dígitos do campo `telefone`. Nova pendência 15 registrada na seção 3.11. (f) Ícones próprios no menu lateral, no lugar de um marcador genérico. (g) Ordem de navegação por Tab corrigida no formulário de novo pedido. (h) Tela inicial pós-login passa a ser o Dashboard para administrador, e Vendas para os demais papéis. (i) Nova pendência registrada: cores da marca no painel novo ainda são valores de trabalho, não confirmados como oficiais. (j) DNS de painel.olvdistribuidora.com.br confirmado configurado e no ar. |
