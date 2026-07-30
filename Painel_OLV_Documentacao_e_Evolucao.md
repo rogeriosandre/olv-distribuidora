@@ -3,7 +3,7 @@
 
 **Documentação do funcionamento e plano de evolução**
 
-Versão 3.0 · 30/07/2026
+Versão 3.1 · 30/07/2026
 Preparado para Rogério
 
 ---
@@ -19,7 +19,7 @@ Este documento é a fonte única de verdade do projeto. Quando você o mencionar
 5. **Versão**: sempre que editar, atualize o topo (formato V.X · DD/MM/AAAA).
 6. **Modelo indicado**: ao iniciar qualquer tarefa, informe na primeira linha o modelo indicado conforme a seção 12, e avise quando o modelo em uso for mais pesado que o necessário.
 7. **Conferência de versão (obrigatória)**: ao carregar este documento, informe na primeira linha a versão lida. Se for menor que a última registrada no log ou que a informada por Rogério, **pare e avise**, porque provavelmente veio de cache. Vale mesmo quando ler o documento não fazia parte do plano da tarefa. Motivo no log da v2.9.
-8. **Auditoria de permissão (criada em 29/07/2026)**: qualquer tarefa que altere papel, permissão ou trava de acesso deve auditar **os cinco workflows**, não só os que parecem relacionados. Motivo na seção 8.2.
+8. **Auditoria de permissão (criada em 29/07/2026)**: qualquer tarefa que altere papel, permissão ou trava de acesso deve auditar **todos os workflows**, não só os que parecem relacionados. Motivo na seção 8.2.
 
 ---
 
@@ -29,7 +29,7 @@ O projeto é um painel operacional da OLV Distribuidora que roda no navegador, c
 
 O objetivo é dar autonomia para lançar e consultar o dia a dia do negócio em um só lugar, com cálculos automáticos de lucro e de saldo de estoque, sem depender de aplicativo instalado.
 
-**Estado atual**: existe uma versão do painel, acessível pela web, ainda operando sobre a base anterior. Desde 25/07/2026 o acesso é por login individual com papéis. O painel novo, sobre o Supabase, está em construção e roda em paralelo até a virada.
+**Estado atual**: existe uma versão do painel, acessível pela web, ainda operando sobre a base anterior. Desde 25/07/2026 o acesso é por login individual com papéis. O painel novo, sobre o Supabase, está em construção e roda em paralelo até a virada. Os quatro endpoints do painel novo foram construídos em 30/07/2026 e estão desativados.
 
 **Decisão de 25/07/2026**: o sistema é construído do zero sobre o Supabase (PostgreSQL). Não há migração de dados antigos: o sistema começa vazio e vai sendo preenchido pelo uso, com apenas clientes, produtos e usuários inseridos na abertura.
 
@@ -47,7 +47,7 @@ O painel funciona 24/7 mesmo com o computador desligado. As dependências são o
 
 **Regra de arquitetura (29/07/2026)**: **o navegador nunca fala direto com o Supabase.** Toda leitura e gravação passa pelo n8n, que é onde a permissão é validada. Ver seções 3.10 e 8.
 
-**Status em 30/07/2026**: conexão n8n para Supabase ativa e testada. Esquema do banco concluído. Religação dos fluxos é a pendência aberta da seção 9.1.
+**Status em 30/07/2026**: conexão n8n para Supabase ativa e testada. Esquema do banco concluído. Endpoints do painel novo construídos e desativados. Religação dos fluxos antigos é a pendência aberta da seção 9.1.
 
 ### 2.1 Camada de login e usuários
 
@@ -58,6 +58,8 @@ O painel funciona 24/7 mesmo com o computador desligado. As dependências são o
 **Fluxo de Contas ("OLV Contas")**: cria usuário, troca senha, lista, muda papel e ativa/desativa acessos. Ações de administração exigem papel de administrador.
 
 **HTML do painel**: hoje fica codificado em base64 numa Data Table chamada "OLV Painel HTML". **Isso muda na Fase 1** (ver 9.2): o HTML novo nasce como arquivo versionado no repositório, e a Data Table passa a ser só o lugar de onde o n8n serve.
+
+**Os endpoints do painel novo usam o mesmo token e o mesmo segredo do OLV Login.** Quem entra no painel antigo entra no novo com o mesmo crachá, o que permite testar em paralelo sem criar segunda camada de acesso.
 
 ---
 
@@ -146,6 +148,8 @@ Fluxo por tipo: Entrega segue Aguardando, Em rota, Concluído. Retirada segue Ag
 | Pedido concluído | Estoque, na data da conclusão | Financeiro |
 
 É por isso que existe a `data_conclusao`. Sem ela, o estoque cairia no dia do pagamento com o produto ainda no depósito.
+
+**Sobre o campo `responsavel`**: ele guarda **quem lançou** o pedido, não quem entrega. Não existe hoje campo de entregador. Isso tem efeito na pendência 11, seção 8.3.
 
 ### 3.4 venda_itens (criada em 30/07/2026)
 
@@ -256,6 +260,8 @@ O banco impede apagar cliente ou produto que tenha lançamento ligado, o que pro
 
 **`vw_pedidos`**: o pedido pronto para leitura, com cliente, itens, formas de pagamento e, principalmente, **lucro e margem já descontados**. O painel lê daqui, não das tabelas cruas.
 
+**A `vw_pedidos` não traz os itens do pedido.** Ela diz "3 itens, 5 unidades", mas não diz quais produtos. Por isso o endpoint de leitura faz **uma segunda consulta** em `venda_itens` com a lista de pedidos do período. Decisão de 30/07/2026, tomada por auditabilidade: numa lista plana, o filtro de custo e lucro remove campos nomeados e se confere a olho nu. Num bloco JSON aninhado por pedido, repassar o bloco inteiro por descuido é uma linha de código que ninguém percebe olhando a tela. É a assinatura do incidente da seção 8.2.
+
 **`vw_estoque_atual`**: saldo por produto. Reconstruída em 30/07/2026, porque abatia estoque na data do pedido em vez da conclusão, contrariando a regra da seção 6. Agora só conta pedido concluído, pela `data_conclusao`.
 
 ### 3.10 Travas do banco
@@ -277,6 +283,8 @@ Regras que o banco garante sozinho, independente de quem grave:
 
 **Função `registrar_venda`**: grava pedido, itens, pagamentos e recebíveis **numa transação só**. O n8n a chama uma única vez. Como o n8n não tem transação entre nós, gravar em etapas deixaria uma janela em que o pedido existe sem pagamento. Se qualquer parte falhar, nada é gravado.
 
+**Por que não existe edição de valores de pedido (30/07/2026).** Cada nó do n8n é uma transação própria, que fecha sozinha. Alterar a quantidade de um item dispara o recálculo do total e, no fim daquela transação, a trava adiada compara com a soma dos pagamentos e recusa. O nó seguinte, que corrigiria o pagamento, nunca chega a rodar. Não é arriscado: **não roda**. Editar valores exige uma função `atualizar_venda` no banco, no mesmo molde da `registrar_venda`, e antes disso exige uma decisão de negócio: se a função preserva o custo original de cada item ou reestampa o custo do dia da edição. As duas escolhas mudam o lucro de meses já fechados.
+
 **RLS**: tranca ativa nas 8 tabelas, sem nenhuma política liberando acesso. As chaves públicas do Supabase ficam totalmente bloqueadas; o n8n conecta com usuário que ignora a tranca. A porta da frente está fechada e só o n8n tem a chave. **A proteção por papel depende inteiramente da validação dentro do n8n.** Se um dia o painel acessar o banco direto, será obrigatório escrever políticas antes.
 
 ### 3.11 Pendências e decisões em aberto *
@@ -293,10 +301,16 @@ Regras que o banco garante sozinho, independente de quem grave:
 | 8 | ~~contas_receber não aponta para o pagamento~~ | **Resolvido em 30/07/2026**: campo `pagamento_id` |
 | 9 | **Recebíveis de terceiros** | Crédito, Débito e Gás do Povo serão tratados juntos na Fase 2 |
 | 10 | **Lucro por item ignora o desconto** | Contornado pela view `vw_pedidos`. Se um dia o desconto precisar ser rateado item a item, é aqui |
+| 13 | **Excluir ou editar movimentação de estoque não desfaz o custo médio** | Descoberto em 30/07/2026. O gatilho `trg_custo_produto` dispara **só no INSERT**. Apagar uma Entrada devolve a quantidade ao saldo, mas deixa o `custo_atual` num valor que nenhuma compra real justifica, e o erro é invisível na tela. Por isso o endpoint de estoque **não tem exclusão**: correção se faz por Ajuste, que deixa rastro. Resolver exige recálculo no banco |
+| 14 | **Gratuidade combinada com Crediário gera recebível com valor cheio** | Descoberto em 30/07/2026 na leitura da `registrar_venda`. A função zera `pagamentos.valor` mas insere o valor original em `contas_receber`. Só aparece nessa combinação. Nada foi alterado |
+
+A numeração 11 e 12 fica na seção 8.3, porque são pendências de segurança. A série é única.
 
 ---
 
 ## 4. OS WORKFLOWS N8N
+
+### 4.1 Em produção, sobre a base anterior
 
 | Workflow | O que faz | Endpoint |
 |---|---|---|
@@ -306,7 +320,28 @@ Regras que o banco garante sozinho, independente de quem grave:
 | OLV Login | Autentica e devolve o token de 12h | POST /webhook/olv-login |
 | OLV Contas | Gestão de usuários, só administrador | POST /webhook/olv-contas |
 
-**Pendente**: os fluxos ainda leem e gravam na base anterior. Os workflows do painel novo serão construídos **em paralelo**, sem tocar nos que estão no ar, e a virada só acontece na validação.
+### 4.2 Do painel novo, sobre o Supabase (construídos em 30/07/2026)
+
+Prefixo OLV2 para não haver confusão com o conjunto em produção. **Todos desativados**, aguardando a Fase 1.
+
+| Workflow | Endpoint | Ações |
+|---|---|---|
+| OLV2 Dados (painel novo) | POST /webhook/olv2-dados | `tudo` (carga inicial) e `pedidos` (recarga leve) |
+| OLV2 Pedido (painel novo) | POST /webhook/olv2-pedido | `criar`, `status`, `editar_leve`, `excluir` |
+| OLV2 Estoque (painel novo) | POST /webhook/olv2-estoque | `lancar`, `historico` |
+| OLV2 Clientes (painel novo) | POST /webhook/olv2-clientes | `criar`, `editar`, `buscar` |
+
+**Bloco de entrada idêntico nos quatro**: Normalizar, Autenticar, Assinar, Autorizar, Autorizado?, Perfil, Rotear. O nó `Perfil` calcula uma coisa só, `isAdmin = papel === 'admin'`, e nenhum ponto dos quatro compara papel contra rótulo. O nó Crypto tem `type: SHA256` e `encoding: hex` fixados explicitamente desde o rascunho, que é a armadilha descrita na seção 8.2.
+
+**O que cada ação faz.**
+
+`criar` monta o pacote com venda, itens e pagamentos e chama a `registrar_venda` **uma vez só**. `status` altera apenas a situação e é liberado a qualquer usuário ativo, porque é operacional e reversível. `editar_leve` cobre `status`, `tipo_entrega`, `observacao` e `data`, restrito ao dono do lançamento ou ao administrador. `excluir` tem a mesma restrição. Valores de item, desconto, cliente e pré-pago ficam de fora, pelo motivo da seção 3.10.
+
+**A permissão de dono é conferida dentro da própria instrução de gravação**, não num nó separado que lê antes e grava depois. Assim não existe janela entre conferir e gravar. Quando o pedido não é encontrado ou o usuário não é o responsável, a resposta é a mesma mensagem, e nada é alterado.
+
+**Testado contra o banco real em 30/07/2026**, com limpeza conferida depois: pedido completo com recebível, reenvio com a mesma chave devolvendo `repetido` sem duplicar, edição bloqueada para quem não é dono e liberada para o dono, e cliente duplicado barrado com o nome do cliente já cadastrado na mensagem.
+
+**Pendente**: os fluxos em produção ainda leem e gravam na base anterior, e continuam intocados. A virada só acontece na validação da Fase 1, e o conjunto antigo permanece como ponto de retorno.
 
 **Arquivado**: `TEMP - Leitura OLV Painel HTML`, usado na renomeação de 28/07. Não roda mais, mas continua guardado na seção de arquivados, porque as ferramentas usadas não têm exclusão definitiva.
 
@@ -364,6 +399,8 @@ Quando o preço cai por bater meta, o custo médio desce aos poucos, conforme o 
 
 **Estoque Inicial zera a conta**: numa contagem física, o custo informado substitui a média, sem misturar com o histórico anterior.
 
+**O custo se forma na entrada e não se desfaz na exclusão (30/07/2026).** O gatilho que atualiza o custo dispara **só quando a movimentação é criada**. Apagar ou editar uma Entrada depois devolve a quantidade ao saldo, mas **não desfaz o efeito no custo médio**. O produto fica com um custo que nenhuma compra real justifica, e nada na tela denuncia isso. É como rasgar a nota fiscal e esperar que o preço volte sozinho: o papel some, o número não. Por esse motivo o endpoint de estoque não oferece exclusão de movimentação. **Correção de saldo se faz por Ajuste**, que deixa rastro e não mexe em custo. Ver pendência 13.
+
 ### Lucro
 
 Lucro do pedido = valor_total (já com desconto) − soma dos custos dos itens. Calculado pela view `vw_pedidos`.
@@ -384,17 +421,19 @@ Acesso por https://n8n-wmtt.srv1830312.hstgr.cloud/webhook/olv-painel, com login
 
 **Contas iniciais**: Rogério e Gabriele administradores, e a conta Vendedor como colaborador.
 
-### Renomeação do papel aplicada no sistema (28/07/2026)
+### Permissões por tipo de ação (definidas em 30/07/2026)
 
-O papel "vendedor" foi renomeado para "colaborador" em produção:
+A proteção fica onde está o risco, não onde está a tela.
 
-| Alvo | Pontos |
-|---|---|
-| OLV Painel HTML | 6: comparação do papel, opção do formulário, crachá, rótulo na lista, cálculo do próximo papel, texto do botão |
-| OLV Contas | 4 valores padrão de normalização, publicado |
-| OLV Usuarios | Papel do usuário existente |
+| Ação | Quem pode | Motivo |
+|---|---|---|
+| Mudar situação do pedido | Qualquer usuário ativo, em qualquer pedido | Operacional e reversível |
+| Editar campos leves ou excluir pedido | Dono do lançamento ou administrador | Irreversível na prática |
+| Cadastrar e editar cliente, buscar cliente | Qualquer usuário ativo | Operacional, sem dado financeiro |
+| **Entrada e Estoque Inicial** | **Só administrador** | **Alimentam o custo médio, que é a base do lucro** |
+| **Ajuste de estoque** | **Qualquer usuário ativo** | **Corrige saldo e não toca em custo** |
 
-**O nome de usuário de login continua sendo "vendedor".** Só o papel mudou. O campo "nome" do cadastro também segue como "Vendedor"; trocar é cosmético e está pendente.
+**Por que Entrada é exclusiva do administrador.** O custo unitário é um dos sete pontos financeiros protegidos da seção 8.1. Se o colaborador não pode informar custo, uma Entrada lançada por ele entraria sem custo e não atualizaria a média, deixando o lucro errado sem aviso. Fechar a Entrada e abrir o Ajuste mantém o número do custo confiável sem travar a operação do dia a dia.
 
 ### Como as senhas e a sessão são protegidas
 
@@ -413,6 +452,7 @@ O papel "vendedor" foi renomeado para "colaborador" em produção:
 - Cada registro é identificado por um ID próprio do banco, estável e independente da ordem na tela.
 - O endpoint de leitura usa cabeçalho no-store e parâmetro anti-cache, para o painel sempre puxar dados frescos.
 - **Planilha corrompe telefone (30/07/2026)**: ao editar telefone em Excel ou Sheets, formate a coluna como texto antes. Caso contrário o programa converte para número, come o zero da frente ou acrescenta um no fim. Aconteceu com 15 registros na importação de clientes.
+- **Toda gravação viaja em base64 (30/07/2026)**: ver 8.4.
 
 ### 8.1 Como o painel esconde os dados financeiros
 
@@ -428,7 +468,17 @@ Mecanismo indireto, em duas etapas, que já causou incidente. Quem for mexer em 
 
 1. Os nomes internos `EH_VEND`, `.vend` e `.hideVend` **não foram renomeados**. Não confunda o nome interno com o rótulo.
 2. **Esconder no navegador não é controle de acesso.** O CSS só deixa de exibir; o dado, se enviado, continua no navegador e pode ser lido com as ferramentas de desenvolvedor.
-3. O `Valor Total` de cada venda **é enviado para qualquer papel**. O faturamento nunca esteve protegido no servidor, só escondido na tela. Ver pendência 11.
+3. O `Valor Total` de cada venda **é enviado para qualquer papel**. Ver pendência 11.
+
+**Nos endpoints do painel novo o mecanismo é outro.** Não existe decisão espalhada por nó: cada endpoint tem um nó chamado `Filtrar Saída` que roda depois da consulta e antes de responder, e remove campos nomeados de listas planas.
+
+| Origem | Removido quando o papel não é admin |
+|---|---|
+| `vw_pedidos` | `custo_total`, `lucro`, `margem_pct` |
+| `venda_itens` | `custo_unitario`, `custo_total`, `lucro` |
+| `produtos` | `custo_atual`, `custo_ultima_compra`, `custo_atualizado_em` |
+| `estoque_movimentacoes` | `custo_unitario` |
+| Totais agregados | **Não são sequer calculados** |
 
 ### 8.2 Incidente de 28/07/2026 e correção
 
@@ -442,12 +492,47 @@ Naquele workflow havia a única comparação negativa do lado servidor: `papel =
 
 **Regra que fica**: toda verificação de permissão no servidor deve ser **positiva sobre `admin`**. Assim qualquer papel novo nasce restrito por padrão. Comparação negativa contra um rótulo específico é proibida.
 
+**Conferido em 30/07/2026** nos quatro endpoints novos: nenhuma comparação negativa de papel, e o nó Crypto com `type` e `encoding` gravados desde o rascunho.
+
 ### 8.3 Pendências de segurança
 
 | # | Ponto | Situação |
 |---|---|---|
-| 11 | **Valor Total enviado a todos os papéis** | A correção completa depende do desenho de setores, seção 9.7 |
+| 11 | **Valor Total enviado a todos os papéis** | Ver detalhamento abaixo |
 | 12 | ~~Ticket médio exposto ao colaborador~~ | **Resolvido em 30/07/2026**: o indicador saiu do painel novo, e o Dashboard passou a ser exclusivo do administrador |
+
+**Pendência 11, detalhada.**
+
+*Reduzido em 30/07/2026*: nos endpoints do painel novo, os totais agregados (faturamento, lucro, margem, itens vendidos) **não são calculados** para quem não é admin. Não é que existam escondidos: eles não existem na resposta. O `valor_total` do pedido individual continua saindo, por necessidade operacional, porque o entregador precisa saber quanto cobrar na porta do cliente.
+
+*Por que segue aberta*: como o valor individual sai, o faturamento do período continua derivável por soma nas ferramentas de desenvolvedor. A exposição diminuiu, não acabou.
+
+**Direção decidida em 30/07/2026**: o colaborador passará a receber o valor apenas dos pedidos **atribuídos a ele em rota**, mais os que ele mesmo lançou.
+
+**Execução na etapa 9.7**, junto com setores, porque muda o modelo de permissão e a 9.7 já determina que isso vem depois da religação. Fazer agora significaria escrever regra de permissão duas vezes, que é a forma exata de repetir o incidente de 28/07.
+
+*Depende de resolver quatro coisas*:
+
+| Ponto | O que falta |
+|---|---|
+| Campo de entregador | Não existe. O `responsavel` guarda quem **lançou**, não quem entrega. São pessoas diferentes: uma lança no balcão, outra leva |
+| Momento da atribuição | Definir se o administrador atribui ou se o entregador se atribui ao pegar a rota |
+| Retirada | Nunca fica Em rota. Quem atende o balcão precisa do valor para cobrar, e não há a quem atribuir |
+| Aguardando | Ainda não tem entregador. Sem valor nenhum, o colaborador não confere o que digitou |
+
+**Limite aceito**: quem lança continua vendo o valor do que lançou, e isso não tem como tirar sem quebrar a conferência. Se uma pessoa concentra os lançamentos, o faturamento segue parcialmente derivável.
+
+### 8.4 Toda gravação viaja em base64 (30/07/2026)
+
+O nó Postgres do n8n separa os parâmetros da consulta **por vírgula**. Não há como escapar uma vírgula dentro de um valor. Qualquer observação de pedido com vírgula quebraria a gravação, e texto livre quase sempre tem vírgula.
+
+**Solução adotada**: cada gravação envia **um único parâmetro**, que é o pacote JSON inteiro codificado em base64. O SQL decodifica na primeira linha da consulta e lê os campos de dentro. O alfabeto do base64 não tem vírgula, então o problema desaparece na origem.
+
+É como despachar uma encomenda lacrada em vez de espalhar os itens soltos na esteira: o que vai dentro não interfere no transporte.
+
+**Efeito colateral bom**: nada do que o usuário digita entra na consulta como texto. Fecha a porta para injeção de SQL sem esforço adicional.
+
+**Testado em 30/07/2026** com o texto "teste tecnico, com virgula", gravado e lido corretamente.
 
 ---
 
@@ -465,12 +550,13 @@ Ciclo de cada etapa: definir o escopo, implementar sem afetar o que funciona, te
 - 26/07: esquema especificado, índices e RLS verificados.
 - 30/07: **modelo de pedido com itens**, 8 formas de pagamento, recebíveis automáticos, custo médio ponderado, função `registrar_venda`, travas de consistência e as duas views. Tudo testado com casos de borda e o banco limpo depois.
 - 30/07: **6 produtos cadastrados** com custo e estoque mínimo.
-- 30/07: **910 clientes preparados para importação**, ver abaixo.
+- 30/07: **910 clientes importados**, conferidos sem campo vazio, sem telefone inválido e com 910 telefones únicos.
+- 30/07: **quatro endpoints do painel novo construídos e desativados**, testados contra o banco real com limpeza conferida. Ver seção 4.2.
 
 #### Falta
 
-- Importar os clientes no banco.
-- Religar os fluxos de vendas e estoque para o Supabase.
+- Ligar o painel novo aos endpoints novos, na Fase 1.
+- Fazer a virada e aposentar os fluxos antigos, com a sua aprovação.
 - Configurar o DNS de painel.olvdistribuidora.com.br no Registro.br.
 
 #### A importação de clientes (30/07/2026)
@@ -479,7 +565,7 @@ Partida: 1.598 contatos exportados do Google Contatos, no formato "nome - endere
 
 | Resultado | Linhas |
 |---|---|
-| **Prontos para importar** | **910** |
+| **Importados** | **910** |
 | Incompletos, separados para revisão | 677 |
 | Duplicados removidos | 19 |
 
@@ -487,21 +573,30 @@ Todos os 910 têm nome, endereço, bairro e telefone. Os incompletos são em mai
 
 **24 bairros** identificados, com apelidos unificados: BS1 e Bomss 1 viraram Bomssucesso 1, MDL virou Morada Do Lago, NVSM virou Nova São Mateus, BV virou Boa Vista. Distribuição dos 910 importados: Vitória 309, São Pedro 113, Bomssucesso 1 76, Novo Horizonte 63, Sto Antônio 60, Bomssucesso 2 53, Nova São Mateus 51, Morada Do Lago 33, Ayrton Senna 29, Vila Nova 26, Caiçaras 24, Parque Das Brisas 22, e mais 12 bairros com menos de 10 cada.
 
-**Importação concluída em 30/07/2026**: 910 registros no banco, conferidos sem campo vazio, sem telefone inválido e com 910 telefones únicos.
-
 Textos que estavam no campo de bairro mas não são bairro, como "Supergasbras" e "Atrás do Posto", foram movidos para observação, e esses clientes foram para a lista de revisão.
 
 **Sobre os DDDs**: 860 dos 910 são DDD 27. Os demais foram conferidos pelo Rogério e estão corretos, de clientes que mudaram de estado e mantiveram o número.
 
 ### 9.2 Fase 1: Painel operacional novo *
 
-**Status**: simulação visual aprovada em 30/07/2026, construção a iniciar.
+**Status**: simulação visual aprovada em 30/07/2026. **Endpoints construídos e desativados em 30/07/2026.** Falta o painel em si.
 
 **Decisão de 30/07/2026**: o painel não será adaptado, será **reescrito**. Adaptar o HTML atual, com 878 linhas em base64 dentro de uma Data Table, ao formato novo de dados custaria mais que escrever do zero, e sem ganho.
 
 **O HTML novo nasce como arquivo versionado no repositório**, editável e comparável. A Data Table continua sendo só o lugar de onde o n8n serve, alimentada por um processo de publicação. Motivo: hoje custa meia dúzia de etapas para trocar seis palavras, e o incidente da seção 8.2 aconteceu em parte porque ninguém enxergava o arquivo com facilidade.
 
 **Construção em paralelo**: o painel atual continua no ar e intocado, operando o dia a dia. O novo é construído em endpoints separados. A virada só acontece na sua aprovação, e o antigo permanece como ponto de retorno.
+
+#### Endpoints: as seis decisões aprovadas em 30/07/2026
+
+1. **Itens do pedido por segunda consulta**, não por bloco JSON aninhado. Motivo na seção 3.9: auditabilidade do filtro de custo.
+2. **Pendência 11 tratada agora no que dava**: totais agregados não são calculados para quem não é admin. Detalhe na seção 8.3.
+3. **Edição de pedido dividida**: `criar`, `status`, `excluir` e um `editar_leve` de quatro campos. Edição de valores vira tarefa própria, porque depende de uma função no banco e de uma decisão sobre custo histórico. Motivo na seção 3.10.
+4. **Permissão positiva sobre admin** nos quatro, com um único nó `Perfil`.
+5. **Entrada e Estoque Inicial exclusivos do administrador**, Ajuste liberado. Motivo na seção 7.
+6. **Sem exclusão de movimentação de estoque** na Fase 1. Motivo na pendência 13.
+
+**Ajuste feito na construção**: o endpoint de leitura foi desenhado com cinco ações e nasceu com **duas**, `tudo` e `pedidos`. Puxar os 910 clientes a cada mudança de situação de pedido é peso desnecessário no celular, e estoque, produtos e clientes já vêm na carga inicial. Separar as ações depois é trabalho de meia hora, se o uso pedir.
 
 #### Estrutura aprovada
 
@@ -521,7 +616,7 @@ Quatro abas com roteamento onde cada pedido aparece em uma só: Aguardando (não
 
 Indicadores da seção: pedidos hoje, aguardando, em rota e pré-pagos a entregar.
 
-**Permissões por tipo de ação, não por tela**: mudar status pode qualquer usuário ativo, em qualquer pedido; editar valores ou excluir só o dono do lançamento e o administrador. Mudar status é operacional e reversível; alterar valor é irreversível na prática. A proteção fica onde está o risco.
+**Permissões por tipo de ação, não por tela**: ver a tabela da seção 7.
 
 #### Formulário de pedido (aprovado em 30/07/2026)
 
@@ -532,9 +627,11 @@ Quatro blocos mais "Mais opções" recolhido:
 3. **Entrega**: tipo, situação inicial e interruptor de pré-pago. Escolher Retirada some com a opção "Em rota".
 4. **Pagamento**: começa com uma linha preenchida com o total. "Dividir pagamento" adiciona linha com o restante. Faixa mostra **"Falta alocar"** em âmbar e vira verde quando zera; o botão Salvar fica desabilitado até lá. Crediário abre campo de vencimento obrigatório; Em aberto vem preenchido com 3 dias, editável.
 
+**O painel deve enviar uma `idempotency_key` própria em cada pedido novo.** É o que faz o toque duplo devolver o mesmo pedido em vez de criar dois. Testado em 30/07/2026.
+
 #### Estoque
 
-Indicadores, tabela de produtos com situação, e **histórico de movimentações** com filtro por tipo, mostrando a saída automática por venda concluída como lançamento do sistema.
+Indicadores, tabela de produtos com situação, e **histórico de movimentações** com filtro por tipo, mostrando a saída automática por venda concluída como lançamento do sistema. Sem botão de excluir movimentação, pelo motivo da pendência 13.
 
 #### Cuidados
 
@@ -556,7 +653,7 @@ Duas seções próprias no painel, não sub-abas de um Financeiro único.
 
 **A pagar**: cadastro com fornecedor, descrição, valor, vencimento, status e categoria; ligação com as entradas de estoque, aproveitando o custo e o fornecedor já registrados; anexo de boletos no Storage; alertas no Telegram.
 
-**Clientes**: seção própria com cadastro, edição e histórico de pedidos por cliente.
+**Clientes**: seção própria com cadastro, edição e histórico de pedidos por cliente. O endpoint de manutenção de clientes já existe desde 30/07/2026.
 
 ### 9.5 Fase 2: Controle de caixa *
 
@@ -602,6 +699,8 @@ Separar duas coisas hoje misturadas:
 | operacional | Estoque, movimentações e alertas |
 | comum sem setor | Nada além da própria troca de senha |
 
+**Entra nesta etapa a execução da pendência 11**: campo de entregador em `vendas`, momento da atribuição, tratamento de Retirada e de Aguardando. Detalhe na seção 8.3.
+
 **A regra inegociável: a filtragem acontece no servidor, antes de o dado sair.** Esconder no navegador não conta. O incidente de 28/07 demonstra: a proteção visual continuou intacta enquanto o dado sensível trafegava. Prometer separação de áreas e entregar ocultação visual seria pior que não prometer nada.
 
 **Decisões em aberto**: lista final de setores; se um setor tem níveis internos, por exemplo financeiro que consulta contra financeiro que dá baixa; se quem lançou continua vendo o próprio lançamento ao sair do setor.
@@ -613,8 +712,8 @@ Separar duas coisas hoje misturadas:
 | Ordem | Etapa | Situação |
 |---|---|---|
 | 1º | Login multiusuário | Concluído e no ar |
-| 2º | Base de dados no Supabase | Esquema concluído, falta importar clientes e religar fluxos |
-| 3º | **Fase 1: painel operacional novo** | Simulação aprovada, construção a iniciar |
+| 2º | Base de dados no Supabase | Esquema, produtos e clientes concluídos. Endpoints do painel novo construídos e desativados |
+| 3º | **Fase 1: painel operacional novo** | Endpoints prontos. Falta o painel e a virada |
 | 4º | Setores e permissões | Depois da virada, antes do financeiro, para os endpoints já nascerem com validação |
 | 5º | Contas a pagar e receber | Fase 2 |
 | 6º | Controle de caixa | Fase 2 |
@@ -623,6 +722,8 @@ Separar duas coisas hoje misturadas:
 **Decisões a fechar:**
 
 - Setores: lista final, níveis internos e tratamento do histórico.
+- Pendência 11: quem atribui o entregador e como tratar Retirada e Aguardando.
+- Edição de valores de pedido: se a função preserva o custo original de cada item ou reestampa o custo do dia da edição.
 - Recebíveis de terceiros: crédito, débito e Gás do Povo, realizado na venda ou previsto até o crédito bancário.
 - Financeiro: categorias de contas a pagar.
 - Caixa: único ou por operador; o que entra como sangria e reforço; como tratar diferenças no fechamento.
@@ -637,15 +738,28 @@ Separar duas coisas hoje misturadas:
 | URL do painel | https://n8n-wmtt.srv1830312.hstgr.cloud/webhook/olv-painel |
 | Autenticação | Login com papéis (administrador e colaborador), token de 12h |
 | Instância n8n | n8n-wmtt.srv1830312.hstgr.cloud |
-| Workflows | OLV Painel Mobile (web), OLV Vendas, OLV Estoque, OLV Login, OLV Contas |
+| Workflows em produção | OLV Painel Mobile (web), OLV Vendas, OLV Estoque, OLV Login, OLV Contas |
+| Workflows do painel novo | OLV2 Dados, OLV2 Pedido, OLV2 Estoque, OLV2 Clientes. Todos desativados |
 | Tabelas internas do n8n | OLV Usuarios e OLV Painel HTML |
 | Pontos de restauração (v1.4) | Painel 63bf15bb; Vendas 348ed17a; Estoque 2adfcba0 |
+| Identificadores dos workflows novos (v3.1) | Dados fi2DPaA6qL7MxwIV; Pedido aPr6vx4oesVfkLis; Estoque 3l15lOfGCeYqLEu7; Clientes ClsDIM8jVRB5fijC |
 | Banco de dados | Supabase PostgreSQL 17, projeto olv-distribuidora_sistema, região São Paulo. 8 tabelas, 2 views, RLS ativa |
 | Conexão n8n para Supabase | Session Pooler IPv4, host aws-0-sa-east-1.pooler.supabase.com, porta 5432, base postgres, usuário postgres.ggvfrnympdrqyqxgcyex, SSL ativo. Credencial "Supabase OLV" |
 | Domínio | olvdistribuidora.com.br no Registro.br. Endereço planejado painel.olvdistribuidora.com.br. DNS pendente |
-| Fonte de clientes | Google Contatos, 910 prontos para importar |
+| Fonte de clientes | Google Contatos, 910 importados |
 | Documento oficial | GitHub rogeriosandre/olv-distribuidora, Painel_OLV_Documentacao_e_Evolucao.md |
 | Documento visual | Painel_OLV_Visual.md, no mesmo repositório |
+
+### Endpoints do painel novo
+
+| Endpoint | Corpo mínimo |
+|---|---|
+| POST /webhook/olv2-dados | `{acao, token, de, ate}` |
+| POST /webhook/olv2-pedido | `{acao, token, venda, itens, pagamentos, idempotency_key}` ou `{acao, token, venda_id, ...}` |
+| POST /webhook/olv2-estoque | `{acao, token, tipo, produto_id, quantidade, custo_unitario, fornecedor}` |
+| POST /webhook/olv2-clientes | `{acao, token, nome, endereco, bairro, telefone}` ou `{acao, token, termo}` |
+
+Toda resposta traz `ok` verdadeiro ou falso. Quando falso, traz `erro` com mensagem pronta para exibir ao usuário.
 
 ### Cuidado com cache ao carregar o documento
 
@@ -695,7 +809,7 @@ Um modelo funciona como um profissional contratado por hora. O mais experiente r
 | Documento | Merge, revisão cruzada, mudança de versão | Opus 5 |
 | Documento | Ajuste de texto e tabela | Sonnet 5 |
 
-**Regras fixas**: nada do módulo fiscal vai para produção sem validação do contador. Qualquer tarefa que altere permissão audita os cinco workflows.
+**Regras fixas**: nada do módulo fiscal vai para produção sem validação do contador. Qualquer tarefa que altere permissão audita todos os workflows.
 
 ### Como o Claude avisa
 
@@ -719,3 +833,4 @@ Primeira linha da resposta: **Modelo indicado: [X]. Motivo: [tipo de tarefa].** 
 | 26/07/2026 | 1.7 a 2.8 | Seção 12 criada; referências à planilha removidas; seção 3 reescrita com o esquema real; índices e RLS verificados; status validado e reduzido a três valores com `tipo_entrega` separado; quadro de vendas por status definido; papel renomeado no documento; pedido pré-pago criado; baixa de estoque movida para a conclusão; trava de cliente duplicado por telefone. |
 | 29/07/2026 | 2.9 | Restaurada a v2.8, sobrescrita em 28/07 por um commit que partiu da v1.6 recebida em cache. Incorporada a renomeação aplicada no sistema. Documentado o mecanismo de ocultação financeira. Registrado o incidente do nó Montar Payload, que expôs lucro e custo ao colaborador por 16 horas, e sua correção. Criada a etapa de setores e a regra de conferência de versão. |
 | 30/07/2026 | 3.0 | **Reestruturação do pedido e fundação de dados concluída.** (a) Criada a tabela `venda_itens`: a venda deixou de ser uma linha por produto e virou um pedido com vários itens, com custo e lucro por item. `produto_id`, `quantidade` e `custo_unitario` saíram de `vendas`, que ganhou `desconto` e `idempotency_key`. (b) Definidas as 8 formas de pagamento em lista fechada, com a regra de recebível por linha de pagamento e o tratamento da Gratuidade, que zera o pedido. (c) Criada a função `registrar_venda`, que grava pedido, itens, pagamentos e recebíveis numa transação só, encerrando as pendências 1 e 4. (d) Criadas as travas de consistência do pedido, adiadas para o fim da transação. (e) `contas_receber` ganhou `pagamento_id` e cascata, encerrando a pendência 8. (f) Custo do produto passou a nascer da entrada de estoque, por média ponderada, com o custo da última compra visível ao lado; `estoque_movimentacoes` ganhou custo e fornecedor. (g) `vw_estoque_atual` reconstruída: abatia estoque na data do pedido em vez da conclusão, contrariando a regra da seção 6. (h) Criada `vw_pedidos`, que calcula lucro e margem já com o desconto, corrigindo distorção descoberta nos testes. (i) 6 produtos cadastrados e 910 clientes preparados a partir de 1.598 contatos, com 24 bairros padronizados. (j) Simulação visual do painel novo aprovada, com Dashboard exclusivo do administrador e o indicador de ticket médio removido, encerrando a pendência 12. (k) Decidido reescrever o HTML do painel como arquivo versionado, em construção paralela ao painel atual. |
+| 30/07/2026 | 3.1 | **Endpoints do painel novo construídos e desativados (tarefa 4).** (a) Criados os quatro workflows OLV2, com bloco de autenticação idêntico, permissão positiva sobre `admin` e nó Crypto com `type` e `encoding` fixados desde o rascunho. Seção 4.2. (b) Registradas as seis decisões de desenho aprovadas, incluindo itens do pedido por segunda consulta e a divisão da edição de pedido em `criar`, `status`, `editar_leve` e `excluir`. Seção 9.2. (c) Nova convenção 8.4: toda gravação viaja como um único parâmetro em base64, porque o nó Postgres separa parâmetros por vírgula e texto livre tem vírgula. Fecha também a porta para injeção de SQL. (d) Nova regra de permissão na seção 7: Entrada e Estoque Inicial exclusivos do administrador, porque alimentam o custo médio; Ajuste liberado a qualquer usuário ativo. (e) Pendência 13 criada: o gatilho de custo dispara só no INSERT, então excluir movimentação não desfaz o custo médio; por isso não existe exclusão no endpoint de estoque. (f) Pendência 14 criada: Gratuidade combinada com Crediário grava recebível com o valor cheio. (g) Pendência 11 reduzida e detalhada: totais agregados deixam de ser calculados para quem não é admin, e ficou decidida a direção de entregar valor apenas dos pedidos em rota atribuídos ao colaborador, para executar na etapa 9.7. (h) Endpoint de leitura nasceu com duas ações em vez de cinco, por peso no celular. (i) Registrado que `responsavel` guarda quem lançou, não quem entrega, e que não existe campo de entregador. |
