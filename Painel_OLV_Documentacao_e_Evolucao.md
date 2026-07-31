@@ -3,7 +3,7 @@
 
 **Documentação do funcionamento e plano de evolução**
 
-Versão 3.2 · 30/07/2026
+Versão 3.4 · 31/07/2026
 Preparado para Rogério
 
 ---
@@ -29,7 +29,7 @@ O projeto é um painel operacional da OLV Distribuidora que roda no navegador, c
 
 O objetivo é dar autonomia para lançar e consultar o dia a dia do negócio em um só lugar, com cálculos automáticos de lucro e de saldo de estoque, sem depender de aplicativo instalado.
 
-**Estado atual**: existe uma versão do painel, acessível pela web, ainda operando sobre a base anterior. Desde 25/07/2026 o acesso é por login individual com papéis. O painel novo, sobre o Supabase, foi construído e publicado em 30/07/2026 em https://painel.olvdistribuidora.com.br (Cloudflare Workers), rodando em paralelo ao painel antigo até a virada. Os quatro endpoints do painel novo, construídos em 30/07/2026, foram ativados no mesmo dia.
+**Estado atual**: existe uma versão do painel, acessível pela web, ainda operando sobre a base anterior. Desde 25/07/2026 o acesso é por login individual com papéis. O painel novo, sobre o Supabase, foi construído e publicado em 30/07/2026 em https://painel.olvdistribuidora.com.br (Cloudflare Workers), rodando em paralelo ao painel antigo até a virada.
 
 **Decisão de 25/07/2026**: o sistema é construído do zero sobre o Supabase (PostgreSQL). Não há migração de dados antigos: o sistema começa vazio e vai sendo preenchido pelo uso, com apenas clientes, produtos e usuários inseridos na abertura.
 
@@ -91,7 +91,7 @@ Cada assunto vive em uma tabela própria, ligada às outras por um código (ID).
 
 Dois limites aceitos: cliente sem telefone não é protegido, porque o banco não tem como saber se é a mesma pessoa; e telefone compartilhado bloqueia o segundo cadastro, o que na prática costuma ser o mesmo cliente de entrega.
 
-**Pendência nova (30/07/2026)**: o endpoint `olv2-dados` (ação `tudo`) não inclui `telefone_norm` na consulta de clientes, só `telefone`. A busca por telefone no painel novo foi ajustada para extrair os dígitos do campo `telefone` no próprio navegador, e funciona, mas o ideal é o endpoint passar a devolver `telefone_norm` pronto, evitando esse trabalho duplicado no cliente.
+**Resolvido em 31/07/2026**: o endpoint `olv2-dados` (ação `tudo`) não incluía `telefone_norm` na consulta de clientes, só `telefone`. O nó `Consultar Clientes T` do workflow OLV2 Dados foi ajustado para incluir `telefone_norm` no SELECT, e o workflow foi publicado. O painel novo ainda extrai os dígitos do campo `telefone` no navegador como caminho alternativo; simplificar essa lógica do lado do cliente para usar o campo pronto é uma limpeza opcional, sem urgência.
 
 ### 3.2 produtos
 
@@ -203,7 +203,7 @@ Uma venda pode ter várias linhas aqui, o que permite pagamento dividido.
 
 **Crédito, Débito e Gás do Povo formam uma família**: dinheiro que já é da empresa mas ainda não chegou, com um terceiro no meio. Ficam para a Fase 2 e serão tratados juntos. Na Fase 1 gravam em `pagamentos` normalmente, só não geram recebível.
 
-**Gratuidade (decidido em 30/07/2026)**: o pedido entra com `valor_total` zero. Baixa estoque normalmente e o custo aparece como prejuízo daquele lançamento. Não entra no faturamento nem no caixa. A função de gravação zera os valores sozinha quando essa forma é escolhida.
+**Gratuidade (decidido em 30/07/2026)**: o pedido entra com `valor_total` zero. Baixa estoque normalmente e o custo aparece como prejuízo daquele lançamento. Não entra no faturamento nem no caixa. A função de gravação zera os valores sozinha quando essa forma é escolhida, inclusive o valor do recebível gerado por uma linha de Crediário no mesmo pedido (corrigido em 31/07/2026, ver pendência 14 na seção 3.11).
 
 **Pré-pago não gera recebível**, porque o dinheiro já entrou.
 
@@ -287,7 +287,7 @@ Regras que o banco garante sozinho, independente de quem grave:
 
 **Por que não existe edição de valores de pedido (30/07/2026).** Cada nó do n8n é uma transação própria, que fecha sozinha. Alterar a quantidade de um item dispara o recálculo do total e, no fim daquela transação, a trava adiada compara com a soma dos pagamentos e recusa. O nó seguinte, que corrigiria o pagamento, nunca chega a rodar. Não é arriscado: **não roda**. Editar valores exige uma função `atualizar_venda` no banco, no mesmo molde da `registrar_venda`, e antes disso exige uma decisão de negócio: se a função preserva o custo original de cada item ou reestampa o custo do dia da edição. As duas escolhas mudam o lucro de meses já fechados.
 
-**RLS**: tranca ativa nas 8 tabelas, sem nenhuma política liberando acesso. As chaves públicas do Supabase ficam totalmente bloqueadas; o n8n conecta com usuário que ignora a tranca. A porta da frente está fechada e só o n8n tem a chave. **A proteção por papel depende inteiramente da validação dentro do n8n.** Se um dia o painel acessar o banco direto, será obrigatório escrever políticas antes.
+**RLS**: tranca ativa nas 8 tabelas, sem nenhuma política liberando acesso. As chaves públicas do Supabase ficam totalmente bloqueadas nas tabelas; o n8n conecta com usuário que ignora a tranca. **Atenção**: essa proteção vale para as tabelas, mas não para as views e funções SECURITY DEFINER — ver pendência 16 na seção 8.3, descoberta em 31/07/2026. **A proteção por papel depende inteiramente da validação dentro do n8n.** Se um dia o painel acessar o banco direto, será obrigatório escrever políticas antes.
 
 ### 3.11 Pendências e decisões em aberto *
 
@@ -303,11 +303,11 @@ Regras que o banco garante sozinho, independente de quem grave:
 | 8 | ~~contas_receber não aponta para o pagamento~~ | **Resolvido em 30/07/2026**: campo `pagamento_id` |
 | 9 | **Recebíveis de terceiros** | Crédito, Débito e Gás do Povo serão tratados juntos na Fase 2 |
 | 10 | **Lucro por item ignora o desconto** | Contornado pela view `vw_pedidos`. Se um dia o desconto precisar ser rateado item a item, é aqui |
-| 13 | **Excluir ou editar movimentação de estoque não desfaz o custo médio** | Descoberto em 30/07/2026. O gatilho `trg_custo_produto` dispara **só no INSERT**. Apagar uma Entrada devolve a quantidade ao saldo, mas deixa o `custo_atual` num valor que nenhuma compra real justifica, e o erro é invisível na tela. Por isso o endpoint de estoque **não tem exclusão**: correção se faz por Ajuste, que deixa rastro. Resolver exige recálculo no banco |
-| 14 | **Gratuidade combinada com Crediário gera recebível com valor cheio** | Descoberto em 30/07/2026 na leitura da `registrar_venda`. A função zera `pagamentos.valor` mas insere o valor original em `contas_receber`. Só aparece nessa combinação. Nada foi alterado |
-| 15 | **Endpoint `olv2-dados` não devolve `telefone_norm`** | Descoberto em 30/07/2026. A consulta de clientes seleciona `telefone`, não `telefone_norm`. O painel novo contorna extraindo os dígitos no navegador; o ideal é o endpoint devolver o campo pronto |
+| 13 | **Excluir ou editar movimentação de estoque não desfaz o custo médio** | Descoberto em 30/07/2026. O gatilho `trg_custo_produto` dispara **só no INSERT**. Apagar uma Entrada devolve a quantidade ao saldo, mas deixa o `custo_atual` num valor que nenhuma compra real justifica, e o erro é invisível na tela. Por isso o endpoint de estoque **não tem exclusão**: correção se faz por Ajuste, que deixa rastro. Resolver exige recálculo no banco — decisão de regra financeira, fica para sessão em Opus 5 |
+| 14 | ~~Gratuidade combinada com Crediário gera recebível com valor cheio~~ | **Resolvido em 31/07/2026**: função `registrar_venda` corrigida para zerar também `contas_receber.valor` nesse caso. Testado com pedido real (Gratuidade + Crediário), recebível confirmado em R$ 0,00, dado de teste removido |
+| 15 | ~~Endpoint `olv2-dados` não devolve `telefone_norm`~~ | **Resolvido em 31/07/2026**: nó `Consultar Clientes T` do OLV2 Dados passou a incluir `telefone_norm` no SELECT; workflow publicado |
 
-A numeração 11 e 12 fica na seção 8.3, porque são pendências de segurança. A série é única.
+A numeração 11, 12 e 16 fica na seção 8.3, porque são pendências de segurança. A série é única.
 
 ---
 
@@ -323,6 +323,8 @@ A numeração 11 e 12 fica na seção 8.3, porque são pendências de segurança
 | OLV Login | Autentica e devolve o token de 12h | POST /webhook/olv-login |
 | OLV Contas | Gestão de usuários, só administrador | POST /webhook/olv-contas |
 
+**Confirmado ativo em 31/07/2026** (validação técnica da virada, seção 9.1): os cinco continuam ativos e no ar, ponto de retorno intacto.
+
 ### 4.2 Do painel novo, sobre o Supabase (construídos em 30/07/2026)
 
 Prefixo OLV2 para não haver confusão com o conjunto em produção. **Ativados em 30/07/2026**, junto com a correção de CORS descrita na seção 9.2. O painel antigo continua intocado e no ar; os dois conjuntos rodam em paralelo até a virada.
@@ -333,6 +335,8 @@ Prefixo OLV2 para não haver confusão com o conjunto em produção. **Ativados 
 | OLV2 Pedido (painel novo) | POST /webhook/olv2-pedido | `criar`, `status`, `editar_leve`, `excluir` |
 | OLV2 Estoque (painel novo) | POST /webhook/olv2-estoque | `lancar`, `historico` |
 | OLV2 Clientes (painel novo) | POST /webhook/olv2-clientes | `criar`, `editar`, `buscar` |
+
+**Confirmado ativo em 31/07/2026** (validação técnica da virada, seção 9.1): os quatro continuam ativos e no ar.
 
 **Bloco de entrada idêntico nos quatro**: Normalizar, Autenticar, Assinar, Autorizar, Autorizado?, Perfil, Rotear. O nó `Perfil` calcula uma coisa só, `isAdmin = papel === 'admin'`, e nenhum ponto dos quatro compara papel contra rótulo. O nó Crypto tem `type: SHA256` e `encoding: hex` fixados explicitamente desde o rascunho, que é a armadilha descrita na seção 8.2.
 
@@ -505,6 +509,7 @@ Naquele workflow havia a única comparação negativa do lado servidor: `papel =
 |---|---|---|
 | 11 | **Valor Total enviado a todos os papéis** | Ver detalhamento abaixo |
 | 12 | ~~Ticket médio exposto ao colaborador~~ | **Resolvido em 30/07/2026**: o indicador saiu do painel novo, e o Dashboard passou a ser exclusivo do administrador |
+| 16 | **Views e funções acessíveis direto pela API do Supabase, sem passar pelo n8n** | Ver detalhamento abaixo |
 
 **Pendência 11, detalhada.**
 
@@ -526,6 +531,19 @@ Naquele workflow havia a única comparação negativa do lado servidor: `papel =
 | Aguardando | Ainda não tem entregador. Sem valor nenhum, o colaborador não confere o que digitou |
 
 **Limite aceito**: quem lança continua vendo o valor do que lançou, e isso não tem como tirar sem quebrar a conferência. Se uma pessoa concentra os lançamentos, o faturamento segue parcialmente derivável.
+
+**Pendência 16, detalhada.**
+
+Descoberta em 31/07/2026, durante a validação técnica da virada (seção 9.1). O auditor de segurança do Supabase apontou que duas views (`vw_pedidos`, `vw_estoque_atual`) e cinco funções (`registrar_venda`, `atualiza_custo_produto`, `checa_venda_consistente`, `recalc_total_desconto`, `recalc_total_venda`) foram criadas como **SECURITY DEFINER**, o que faz elas ignorarem a RLS das tabelas de origem. Ao mesmo tempo, os papéis públicos do Supabase — `anon` (sem login) e `authenticated` — têm `SELECT` nas views e `EXECUTE` nas funções liberados.
+
+Na prática, isso significa que hoje, sem passar pelo painel nem pelo n8n:
+
+- Qualquer pessoa com a URL do projeto e a chave pública do Supabase (que é pública por natureza, não um segredo) consegue ler `vw_pedidos` direto pela API REST e ver lucro, custo e margem de todo pedido — o mesmo dado que o mecanismo da seção 8.1 se esforça para esconder do colaborador.
+- Qualquer pessoa consegue chamar `registrar_venda` direto pela API REST e criar pedidos, sem token, sem autenticação e sem as validações do n8n.
+
+A RLS das 8 tabelas está correta (bloqueia acesso direto, sem política = acesso negado por padrão), mas as views e funções SECURITY DEFINER contornam essa trava. Isso contradiz a regra da seção 2 ("o navegador nunca fala direto com o Supabase"): a brecha independe do painel, existe hoje, e fica mais grave depois da virada, quando o Supabase vira a fonte única de verdade.
+
+**Nada foi alterado no banco.** A correção (revogar `SELECT`/`EXECUTE` de `anon` e `authenticated` nessas views e funções, e por precaução em todas as tabelas do schema, já que o n8n nunca usa a API REST) é rápida, mas por alterar trava de acesso, a decisão fica para sessão em Opus 5 (regra 8, seção 12). **A aprovação final da virada (seção 9.1) fica condicionada a essa decisão.**
 
 ### 8.4 Toda gravação viaja em base64 (30/07/2026)
 
@@ -559,10 +577,13 @@ Ciclo de cada etapa: definir o escopo, implementar sem afetar o que funciona, te
 - 30/07: **quatro endpoints do painel novo construídos**, testados contra o banco real com limpeza conferida. Ver seção 4.2.
 - 30/07: **painel novo ligado aos quatro endpoints e ao login**, testado com login real, leitura de dados e as telas de Vendas, Estoque, Clientes e Dashboard. Publicado em https://painel.olvdistribuidora.com.br.
 - 30/07: **DNS de painel.olvdistribuidora.com.br configurado** no Cloudflare (nameservers apontados, domínio anexado ao Worker como Custom Domain), confirmado no ar respondendo por esse endereço.
+- 31/07: **telefone_norm incluído no endpoint `olv2-dados`** (pendência 15) e **bug da Gratuidade + Crediário corrigido** na função `registrar_venda` (pendência 14). Detalhes na seção 3.11.
 
 #### Falta
 
 - Fazer a virada e aposentar os fluxos antigos, com a sua aprovação.
+
+**Validação técnica realizada em 31/07/2026**: conferidos o status real dos workflows n8n (os 5 antigos e os 4 OLV2 seguem ativos, ponto de retorno intacto) e o estado do Supabase (dados batendo com o documentado: 910 clientes, 6 produtos, demais tabelas vazias como esperado). Encontrada a pendência 16 (seção 8.3), uma brecha de segurança não documentada até então. **A aprovação final da virada fica condicionada a essa decisão, que é de Opus 5.**
 
 #### A importação de clientes (30/07/2026)
 
@@ -648,7 +669,7 @@ Indicadores, tabela de produtos com situação, e **histórico de movimentaçõe
 
 Busca por nome ou telefone, cadastro e edição. Sem histórico de pedidos por cliente nem indicadores, porque dependem de consultas que ainda não existem, previstas na seção 9.4.
 
-**Ajuste de 30/07/2026**: a busca por telefone usava um campo (`telefone_norm`) que o endpoint não devolve. Corrigido para extrair os dígitos do campo `telefone`, que existe na resposta. Ver pendência 15 na seção 3.11.
+**Ajuste de 30/07/2026**: a busca por telefone usava um campo (`telefone_norm`) que o endpoint não devolvia. Corrigido para extrair os dígitos do campo `telefone`, que existe na resposta. **Atualização de 31/07/2026**: o endpoint passou a devolver `telefone_norm` pronto (pendência 15, seção 3.11); simplificar a busca do painel para usar o campo pronto é limpeza opcional, sem urgência.
 
 #### Correção de CORS (30/07/2026)
 
@@ -658,9 +679,24 @@ Ao publicar o painel no domínio final, o navegador bloqueava toda chamada aos c
 
 Ícones próprios para cada item do menu lateral, no lugar de um marcador genérico. Tela inicial após o login passa a ser o Dashboard para administrador, e Vendas para os demais papéis (antes era sempre Vendas).
 
-#### Pendência nova: cores da marca
+#### Cores da marca: testadas e mantidas as originais (decisão fechada em 31/07/2026)
 
-Os tons de azul-marinho, azul-médio, verde, amarelo e vermelho usados no painel são valores de trabalho, escolhidos sem referência oficial. O Painel_OLV_Visual.md pede "azul-marinho da OLV" sem informar o hex exato. Falta confirmar ou substituir pelos códigos oficiais da marca.
+As cores foram extraídas por amostragem de pixel direto do arquivo da logo (azul-marinho #013090, azul médio #0041BC, verde #82D602, mais um ciano #01C9FE na chama interna, fora da lista original) e aplicadas no CSS do painel novo para avaliação. **Rogério testou e decidiu manter as cores de trabalho originais**, já em uso desde a construção do painel: azul-marinho `#0b2545`, azul-médio `#1d6fd6`, verde `#1c9c5b`, amarelo `#e3a92b`, vermelho `#c0392b`. As cores extraídas da logo foram revertidas. Amarelo e vermelho nunca vieram da logo (são cores de alerta do painel) e seguem sem mudança.
+
+#### Bugs do menu lateral corrigidos (31/07/2026)
+
+Dois problemas encontrados e corrigidos no botão de recolher/expandir o menu:
+
+1. **Sobreposição em telas estreitas**: no CSS mobile (`max-width:720px`), o conteúdo tinha margem esquerda fixa de 64px independente do menu estar recolhido ou expandido. Ao expandir (210px), o menu cobria ~146px do conteúdo. Corrigido para a margem acompanhar o estado real do menu.
+2. **Logo não escondia ao recolher**: não existia regra para esconder o texto "OLV Distribuidora" quando o menu recolhe para 64px; o texto só ficava cortado pela largura menor, sobrando o "O". Corrigido: a logo some por completo ao recolher, como os demais rótulos do menu.
+
+#### Filtro de período redesenhado (31/07/2026)
+
+O filtro de "De/Até" com botão Buscar virou pills de atalho (Hoje, Ontem, 7 dias, Este mês, Mês ant., Tudo) que preenchem o intervalo e já disparam a busca, mantendo os campos de data editáveis manualmente com o rótulo "X dias" ao lado. Aplicado nos dois usos existentes (Dashboard e Vendas/Concluídos), reaproveitando a mesma função e a mesma validação de intervalo máximo já existente (90 dias em Concluídos). Bordas dos campos de data arredondadas (8px, mesmo padrão dos outros campos do painel).
+
+#### Favicon e ícone de app (31/07/2026)
+
+A partir da imagem da logo (formato de ícone quadrado) enviada por Rogério: favicon (16px e 32px, aba do navegador), apple-touch-icon (180px, tela inicial do iPhone) e ícone de app via manifest (192px, "Adicionar à tela inicial" no Android), com a cor de fundo do app (`theme-color`) combinando com o painel. Os cantos, que na imagem original eram um quadrado preto sólido com a forma arredondada desenhada por dentro, foram recortados com transparência real (raio medido nos próprios pixels da arte, 186px) para o ícone ficar arredondado em qualquer fundo de aba, não só em tema escuro. Tudo embutido como dado direto no HTML, sem precisar de arquivos extras no deploy.
 
 #### Cuidados
 
@@ -741,7 +777,7 @@ Separar duas coisas hoje misturadas:
 | Ordem | Etapa | Situação |
 |---|---|---|
 | 1º | Login multiusuário | Concluído e no ar |
-| 2º | Base de dados no Supabase | Esquema, produtos, clientes e endpoints do painel novo concluídos e ativados |
+| 2º | Base de dados no Supabase | Esquema, produtos, clientes e endpoints do painel novo concluídos e ativados. Validação técnica feita em 31/07/2026 |
 | 3º | **Fase 1: painel operacional novo** | Painel construído e publicado em painel.olvdistribuidora.com.br, em teste real com dados reais. Falta a virada final e aposentar o painel antigo |
 | 4º | Setores e permissões | Depois da virada, antes do financeiro, para os endpoints já nascerem com validação |
 | 5º | Contas a pagar e receber | Fase 2 |
@@ -750,6 +786,7 @@ Separar duas coisas hoje misturadas:
 
 **Decisões a fechar:**
 
+- **Pendência 16 (nova, seção 8.3)**: revogar o acesso de `anon`/`authenticated` às views e funções do Supabase que hoje ignoram a RLS. Decisão de Opus 5, bloqueia a aprovação final da virada.
 - Setores: lista final, níveis internos e tratamento do histórico.
 - Pendência 11: quem atribui o entregador e como tratar Retirada e Aguardando.
 - Edição de valores de pedido: se a função preserva o custo original de cada item ou reestampa o custo do dia da edição.
@@ -757,7 +794,6 @@ Separar duas coisas hoje misturadas:
 - Financeiro: categorias de contas a pagar.
 - Caixa: único ou por operador; o que entra como sangria e reforço; como tratar diferenças no fechamento.
 - Fiscal: ST do gás e vasilhame com o contador; CSC na SEFAZ-ES; inscrição estadual no provedor.
-- Cores oficiais da marca, para substituir os valores de trabalho do painel novo.
 
 ---
 
@@ -778,6 +814,8 @@ Separar duas coisas hoje misturadas:
 | Conexão n8n para Supabase | Session Pooler IPv4, host aws-0-sa-east-1.pooler.supabase.com, porta 5432, base postgres, usuário postgres.ggvfrnympdrqyqxgcyex, SSL ativo. Credencial "Supabase OLV" |
 | Domínio | olvdistribuidora.com.br no Registro.br. painel.olvdistribuidora.com.br configurado no Cloudflare e no ar desde 30/07/2026 |
 | Fonte de clientes | Google Contatos, 910 importados |
+| Cores do painel | Mantidos os valores de trabalho originais: azul-marinho #0b2545, azul-médio #1d6fd6, verde #1c9c5b, amarelo #e3a92b, vermelho #c0392b. Testada e descartada a troca pelas cores da logo (31/07/2026) |
+| Favicon / ícone de app | Embutido no HTML como data URI: favicon 16/32px, apple-touch-icon 180px, ícone de manifest 192px, cantos com transparência real |
 | Documento oficial | GitHub rogeriosandre/olv-distribuidora, Painel_OLV_Documentacao_e_Evolucao.md |
 | Documento visual | Painel_OLV_Visual.md, no mesmo repositório |
 
@@ -866,3 +904,4 @@ Primeira linha da resposta: **Modelo indicado: [X]. Motivo: [tipo de tarefa].** 
 | 30/07/2026 | 3.0 | **Reestruturação do pedido e fundação de dados concluída.** (a) Criada a tabela `venda_itens`: a venda deixou de ser uma linha por produto e virou um pedido com vários itens, com custo e lucro por item. `produto_id`, `quantidade` e `custo_unitario` saíram de `vendas`, que ganhou `desconto` e `idempotency_key`. (b) Definidas as 8 formas de pagamento em lista fechada, com a regra de recebível por linha de pagamento e o tratamento da Gratuidade, que zera o pedido. (c) Criada a função `registrar_venda`, que grava pedido, itens, pagamentos e recebíveis numa transação só, encerrando as pendências 1 e 4. (d) Criadas as travas de consistência do pedido, adiadas para o fim da transação. (e) `contas_receber` ganhou `pagamento_id` e cascata, encerrando a pendência 8. (f) Custo do produto passou a nascer da entrada de estoque, por média ponderada, com o custo da última compra visível ao lado; `estoque_movimentacoes` ganhou custo e fornecedor. (g) `vw_estoque_atual` reconstruída: abatia estoque na data do pedido em vez da conclusão, contrariando a regra da seção 6. (h) Criada `vw_pedidos`, que calcula lucro e margem já com o desconto, corrigindo distorção descoberta nos testes. (i) 6 produtos cadastrados e 910 clientes preparados a partir de 1.598 contatos, com 24 bairros padronizados. (j) Simulação visual do painel novo aprovada, com Dashboard exclusivo do administrador e o indicador de ticket médio removido, encerrando a pendência 12. (k) Decidido reescrever o HTML do painel como arquivo versionado, em construção paralela ao painel atual. |
 | 30/07/2026 | 3.1 | **Endpoints do painel novo construídos e desativados (tarefa 4).** (a) Criados os quatro workflows OLV2, com bloco de autenticação idêntico, permissão positiva sobre `admin` e nó Crypto com `type` e `encoding` fixados desde o rascunho. Seção 4.2. (b) Registradas as seis decisões de desenho aprovadas, incluindo itens do pedido por segunda consulta e a divisão da edição de pedido em `criar`, `status`, `editar_leve` e `excluir`. Seção 9.2. (c) Nova convenção 8.4: toda gravação viaja como um único parâmetro em base64, porque o nó Postgres separa parâmetros por vírgula e texto livre tem vírgula. Fecha também a porta para injeção de SQL. (d) Nova regra de permissão na seção 7: Entrada e Estoque Inicial exclusivos do administrador, porque alimentam o custo médio; Ajuste liberado a qualquer usuário ativo. (e) Pendência 13 criada: o gatilho de custo dispara só no INSERT, então excluir movimentação não desfaz o custo médio; por isso não existe exclusão no endpoint de estoque. (f) Pendência 14 criada: Gratuidade combinada com Crediário grava recebível com o valor cheio. (g) Pendência 11 reduzida e detalhada: totais agregados deixam de ser calculados para quem não é admin, e ficou decidida a direção de entregar valor apenas dos pedidos em rota atribuídos ao colaborador, para executar na etapa 9.7. (h) Endpoint de leitura nasceu com duas ações em vez de cinco, por peso no celular. (i) Registrado que `responsavel` guarda quem lançou, não quem entrega, e que não existe campo de entregador. |
 | 30/07/2026 | 3.2 | **Painel novo construído, publicado e ligado aos endpoints; workflows OLV2 ativados.** (a) `index.html` do painel novo escrito e publicado em https://painel.olvdistribuidora.com.br via Cloudflare Workers (Cloudflare Drop, domínio próprio anexado). (b) Corrigido bloqueio de CORS nos cinco webhooks usados pelo painel (OLV Login e os quatro OLV2): nenhum tinha `allowedOrigins` configurado, o que impedia qualquer chamada do navegador a partir do domínio novo. Corrigido nó a nó e publicado; os quatro workflows OLV2 saíram de desativados para ativos. (c) Quadro de Vendas redesenhado: as quatro situações passam a aparecer em colunas simultâneas, no lugar de abas que escondiam as demais ao trocar de situação. (d) Filtro de período (Dashboard e Concluídos) movido para o topo da página, ao lado do título. (e) Corrigida busca de cliente por telefone: usava o campo `telefone_norm`, que o endpoint `olv2-dados` não devolve; passou a extrair os dígitos do campo `telefone`. Nova pendência 15 registrada na seção 3.11. (f) Ícones próprios no menu lateral, no lugar de um marcador genérico. (g) Ordem de navegação por Tab corrigida no formulário de novo pedido. (h) Tela inicial pós-login passa a ser o Dashboard para administrador, e Vendas para os demais papéis. (i) Nova pendência registrada: cores da marca no painel novo ainda são valores de trabalho, não confirmados como oficiais. (j) DNS de painel.olvdistribuidora.com.br confirmado configurado e no ar. |
+| 31/07/2026 | 3.4 | **Validação técnica da virada, correções de bug e ajustes visuais no painel novo.** (a) Conferido o status real dos workflows n8n (5 antigos + 4 OLV2, todos ativos, ponto de retorno intacto) e o estado do Supabase (dados batendo com o documentado). (b) Nova pendência 16 registrada na seção 8.3: `vw_pedidos`, `vw_estoque_atual` e cinco funções (incluindo `registrar_venda`) são SECURITY DEFINER com privilégio liberado para `anon`/`authenticated`, permitindo acesso direto à API do Supabase sem passar pelo n8n; correção fica para sessão em Opus 5, por alterar trava de acesso. A aprovação final da virada depende dessa decisão. (c) Pendência 15 resolvida: `telefone_norm` incluído no SELECT do nó `Consultar Clientes T` (OLV2 Dados), workflow publicado. (d) Pendência 14 resolvida: função `registrar_venda` corrigida para zerar `contas_receber.valor` quando o pedido é Gratuidade, mesmo combinado com Crediário; testado com pedido real e dado de teste removido. (e) Testada a troca das cores do painel pelas cores extraídas da logo (azul-marinho #013090, azul médio #0041BC, verde #82D602); Rogério avaliou e decidiu manter as cores de trabalho originais (#0b2545/#1d6fd6/#1c9c5b). Decisão fechada. (f) Corrigidos dois bugs do menu lateral: sobreposição do conteúdo em telas ≤720px ao expandir o menu, e a logo "OLV Distribuidora" não sumindo por completo ao recolher. (g) Filtro de período do Dashboard e de Vendas/Concluídos redesenhado com pills de atalho (Hoje, Ontem, 7 dias, Este mês, Mês ant., Tudo), mantendo os campos de data editáveis; bordas dos campos arredondadas. (h) Favicon, apple-touch-icon e ícone de manifest (PWA) adicionados a partir da logo, com cantos recortados com transparência real; tudo embutido como data URI no próprio HTML. |
