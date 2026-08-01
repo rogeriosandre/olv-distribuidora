@@ -3,7 +3,7 @@
 
 **Documentação do funcionamento e plano de evolução**
 
-Versão 3.8 · 31/07/2026
+Versão 3.9 · 01/08/2026
 Preparado para Rogério
 
 ---
@@ -20,6 +20,8 @@ Este documento é a fonte única de verdade do projeto. Quando você o mencionar
 6. **Modelo indicado**: ao iniciar qualquer tarefa, informe na primeira linha o modelo indicado conforme a seção 12, e avise quando o modelo em uso for mais pesado que o necessário.
 7. **Conferência de versão (obrigatória)**: ao carregar este documento, informe na primeira linha a versão lida. Se for menor que a última registrada no log ou que a informada por Rogério, **pare e avise**, porque provavelmente veio de cache. Vale mesmo quando ler o documento não fazia parte do plano da tarefa. Motivo no log da v2.9. **Caminho que resolve o cache (31/07/2026)**: quando os dois caminhos de branch entregarem versão velha, carregue pelo código do commit, no formato `raw.githubusercontent.com/rogeriosandre/olv-distribuidora/<commit>/Painel_OLV_Documentacao_e_Evolucao.md`. Endereço de commit é único e não tem cópia guardada. Ver seção 11.
 8. **Auditoria de permissão (criada em 29/07/2026)**: qualquer tarefa que altere papel, permissão ou trava de acesso deve auditar **todos os workflows**, não só os que parecem relacionados. Motivo na seção 8.2.
+9. **Fechamento de acesso após migração (criada em 01/08/2026)**: toda migração termina com `select fechar_acesso_publico();` e a conferência `select * from auditar_acesso_publico() where anon or autenticado or publico;`, que precisa devolver **zero linhas**. Objeto novo **não** nasce fechado: função nova nasce aberta. Motivo na seção 8.6.
+10. **O sistema está em uso real desde 01/08/2026**, com pedidos, clientes e estoque de verdade. Antes de testar contra o banco, tire uma impressão digital dos dados existentes e confira no fim que nada mudou. Limpe todo dado de teste.
 
 ---
 
@@ -190,7 +192,19 @@ Uma venda pode ter várias linhas aqui, o que permite pagamento dividido.
 | id | ID | Chave |
 | venda_id | Ligação | Obrigatório, com cascata |
 | forma | Texto | Obrigatório, **validado** com as 8 formas abaixo |
-| valor | Número | Obrigatório, não negativo |
+| valor | Número | Obrigatório, não negativo. **Sempre o valor cheio**, o que o cliente pagou |
+| maquininha_id | Ligação | **Criado em 01/08/2026.** Aponta para maquininhas, com RESTRICT. Só no cartão |
+| taxa_id | Ligação | Qual linha de `taxas_cartao` foi aplicada. Serve para auditar de onde veio o número |
+| grupo | Texto | **Validado**: Padrão ou Outras. É o interruptor da tela de venda |
+| modalidade | Texto | **Validado**: Débito ou Crédito |
+| parcelas | Número | Nulo no débito, 1 ou mais no crédito |
+| taxa_pct | Número | **Copiada** da taxa vigente no momento da venda, não referenciada |
+| taxa_valor | **Calculada** | valor × taxa_pct ÷ 100, em 2 casas |
+| valor_liquido | **Calculada** | valor − taxa_valor. O que a operadora credita |
+
+**Por que `valor` continua cheio.** Gravar o líquido é impossível: a trava adiada da seção 3.10 confere se a soma dos pagamentos bate com o total do pedido, e o líquido quebraria todo pedido no cartão. Os dois números são verdade e os dois ficam guardados.
+
+**Travas novas de 01/08/2026**: `ck_pag_grupo`, `ck_pag_modalidade`, `ck_pag_parcelas`, `ck_pag_taxa_pct` e `ck_pag_cartao_coerente`, esta última impedindo pagamento meio cartão e meio não.
 
 **As 8 formas de pagamento (definidas em 30/07/2026):**
 
@@ -266,6 +280,18 @@ O banco impede apagar cliente ou produto que tenha lançamento ligado, o que pro
 
 **`vw_pedidos`**: o pedido pronto para leitura, com cliente, itens, formas de pagamento e, principalmente, **lucro e margem já descontados**. O painel lê daqui, não das tabelas cruas.
 
+**Refeita em 01/08/2026, com as duas margens lado a lado:**
+
+| Coluna | O que responde |
+|---|---|
+| `lucro`, `margem_pct` | Mantidos com o significado anterior, **brutos**, sem a taxa do cartão |
+| `taxa_total` | Quanto a operadora ficou no pedido |
+| `lucro_liquido`, `margem_liquida_pct` | Quanto o pedido rendeu de verdade |
+| `recebido_liquido` | Quanto entra na conta |
+| `acrescimo` | **Faltava na view desde a v3.6.** Entrou junto |
+
+Manter `lucro` e `margem_pct` com o nome e o sentido antigos é o que permitiu acrescentar a margem líquida sem quebrar o painel. Qual das duas aparece no card vira decisão de tela, reversível, em vez de decisão de banco.
+
 **A `vw_pedidos` não traz os itens do pedido.** Ela diz "3 itens, 5 unidades", mas não diz quais produtos. Por isso o endpoint de leitura faz **uma segunda consulta** em `venda_itens` com a lista de pedidos do período. Decisão de 30/07/2026, tomada por auditabilidade: numa lista plana, o filtro de custo e lucro remove campos nomeados e se confere a olho nu. Num bloco JSON aninhado por pedido, repassar o bloco inteiro por descuido é uma linha de código que ninguém percebe olhando a tela. É a assinatura do incidente da seção 8.2.
 
 **`vw_estoque_atual`**: saldo por produto. Reconstruída em 30/07/2026, porque abatia estoque na data do pedido em vez da conclusão, contrariando a regra da seção 6. Agora só conta pedido concluído, pela `data_conclusao`.
@@ -291,7 +317,42 @@ Regras que o banco garante sozinho, independente de quem grave:
 
 **Função `registrar_venda`**: grava pedido, itens, pagamentos e recebíveis **numa transação só**. O n8n a chama uma única vez. Como o n8n não tem transação entre nós, gravar em etapas deixaria uma janela em que o pedido existe sem pagamento. Se qualquer parte falhar, nada é gravado.
 
-**Por que não existe edição de valores de pedido (30/07/2026).** Cada nó do n8n é uma transação própria, que fecha sozinha. Alterar a quantidade de um item dispara o recálculo do total e, no fim daquela transação, a trava adiada compara com a soma dos pagamentos e recusa. O nó seguinte, que corrigiria o pagamento, nunca chega a rodar. Não é arriscado: **não roda**. Editar valores exige uma função `atualizar_venda` no banco, no mesmo molde da `registrar_venda`, e antes disso exige uma decisão de negócio: se a função preserva o custo original de cada item ou reestampa o custo do dia da edição. As duas escolhas mudam o lucro de meses já fechados.
+**Religada em 01/08/2026.** O comportamento das oito formas saiu de dentro do código e passou a ser lido da tabela `formas_pagamento`. Antes de escrever, os campos da tabela foram comparados um a um com o comportamento que estava no código: batem exatamente. Por isso a religação **não muda comportamento nenhum**, ela troca a origem do comportamento.
+
+Prova de que é real: com `prazo_dias` de Em aberto alterado de 3 para 5, um pedido de 01/08 gerou recebível vencendo em 06/08 em vez de 04/08. O valor foi devolvido para 3 em seguida.
+
+A mesma função passou a **capturar a taxa do cartão** e copiá-la para o pagamento. Três decisões de projeto:
+
+1. **Nunca bloqueia a venda por causa de taxa.** Quando a taxa não é encontrada, grava sem taxa e devolve o motivo em `avisos`. Bloquear travaria o balcão no domingo por um cadastro incompleto.
+2. **A maquininha se resolve sozinha quando só existe uma ativa.** Isso fez a captura ligar sem depender de campo novo na tela, e reduziu a mudança de tela ao interruptor de bandeira e às parcelas. Com uma segunda maquininha, o painel passa a ser obrigado a informar qual.
+3. **A modalidade é deduzida do nome da forma.** Acoplamento à lista fechada, aceito porque a lista é fechada de propósito.
+
+Consulta para achar venda no cartão que ficou sem taxa capturada:
+
+```sql
+select p.venda_id, v.data, p.forma, p.grupo, p.parcelas, p.valor
+from pagamentos p join vendas v on v.id = p.venda_id
+where p.maquininha_id is not null and p.taxa_pct is null
+order by v.data desc;
+```
+
+**Função `atualizar_venda` (criada em 01/08/2026)**: troca itens e pagamentos de um pedido existente numa transação só, no mesmo molde da `registrar_venda`. Detalhe abaixo, no lugar do bloco que dizia que a edição de valores não existia.
+
+**Edição completa de pedido, liberada em 01/08/2026.**
+
+*Por que não existia antes.* Cada nó do n8n é uma transação própria, que fecha sozinha. Alterar a quantidade de um item dispara o recálculo do total e, no fim daquela transação, a trava adiada compara com a soma dos pagamentos e recusa. O nó seguinte, que corrigiria o pagamento, nunca chega a rodar. Não era arriscado: **não rodava**.
+
+*Por que virou necessário.* Motivo de negócio dado pelo Rogério: quase todo pedido é pago na entrega, e a forma informada no lançamento é palpite. Produto e quantidade também mudam na porta do cliente.
+
+*A proposta que foi descartada.* Renomear Concluídos para Entregue e criar uma situação Finalizado, com o estoque baixando só no Finalizado. Descartada porque cria uma janela em que o produto já saiu e o sistema ainda o conta no depósito, e esquecer de finalizar vira erro silencioso de estoque.
+
+*O que se descobriu.* O problema que tornava a edição perigosa **já tinha sido resolvido em 31/07**: os gatilhos de releitura da pendência 13 refazem custo e estoque sozinhos quando um item de pedido muda. Não era preciso situação nova nem travar edição de pedido concluído. Faltava só a função.
+
+*Como funciona.* A `atualizar_venda` troca itens e pagamentos do pedido inteiro numa transação só. Vale para qualquer pedido, **inclusive já concluído**. Recebível e taxa de cartão são refeitos junto. Permissão: dono do lançamento ou administrador, mesma regra do `editar_leve`, porque é a mesma categoria de risco.
+
+*Custo dos itens, decisão do Rogério em 01/08/2026*: item que já estava no pedido **preserva** o custo do dia da venda; produto novo entra com o custo de hoje. Protege o lucro do que já foi vendido, e como a edição costuma acontecer no mesmo dia, na prática dá no mesmo quase sempre.
+
+*Aviso que virou a pendência 19.* A função **apaga e recria os pagamentos**. Quando a tabela de baixas existir, a baixa cairia junto por cascata, então a função vai precisar recusar pedido que já tenha recebimento lançado. Está escrito no comentário da função no banco.
 
 **RLS**: tranca ativa nas 8 tabelas, sem nenhuma política liberando acesso. As chaves públicas do Supabase ficam totalmente bloqueadas nas tabelas; o n8n conecta com usuário que ignora a tranca. **A proteção por papel depende inteiramente da validação dentro do n8n.** Se um dia o painel acessar o banco direto, será obrigatório escrever políticas antes.
 
@@ -303,7 +364,9 @@ Regras que o banco garante sozinho, independente de quem grave:
 | Privilégio padrão fechado no schema `public` | **Tabela, view ou função criada daqui para frente nasce sem acesso para os papéis públicos.** Antes nascia liberada, que era a causa raiz |
 | `vw_pedidos` e `vw_estoque_atual` com `security_invoker` | As views passam a rodar com os direitos de quem consulta. Deixam de contornar a RLS por construção, não só por falta de privilégio |
 
-**Regra que fica**: objeto novo no schema `public` nasce fechado. Se algum dia for preciso abrir para a API REST, a abertura é explícita, escrita e acompanhada da política de RLS correspondente. Nunca por herança.
+**Regra corrigida em 01/08/2026.** A regra escrita aqui até a v3.8 dizia que "objeto novo no schema `public` nasce fechado". **Está errada para funções.** Tabela nova nasce fechada; **função nova nasce aberta**, com execução para `PUBLIC`. Testado três vezes. O detalhe e a rotina permanente estão na seção 8.6.
+
+O que fica: se algum dia for preciso abrir algo para a API REST, a abertura é explícita, escrita e acompanhada da política de RLS correspondente. Nunca por herança. E toda migração termina com o fechamento e a conferência da seção 8.6.
 
 ### 3.11 Pendências e decisões em aberto *
 
@@ -317,11 +380,17 @@ Regras que o banco garante sozinho, independente de quem grave:
 | 6 | ~~Gatilho da baixa de estoque~~ | **Resolvido em 26/07/2026**: baixa na conclusão |
 | 7 | ~~pagamentos.forma não é validada~~ | **Resolvido em 30/07/2026**: 8 formas em lista fechada |
 | 8 | ~~contas_receber não aponta para o pagamento~~ | **Resolvido em 30/07/2026**: campo `pagamento_id` |
-| 9 | **Recebíveis de terceiros** | Crédito, Débito e Gás do Povo serão tratados juntos na Fase 2 |
+| 9 | **Recebíveis de terceiros** | **Redesenhado em 01/08/2026**: cartão **não** vira recebível. A taxa já é capturada, o líquido calculado e o prazo cadastrado, então o Fluxo de Caixa projeta direto de `pagamentos`. **Gás do Povo continua virando recebível de verdade**, porque o repasse do programa pode atrasar ou vir diferente |
 | 10 | **Lucro por item ignora o desconto** | Contornado pela view `vw_pedidos`. Se um dia o desconto precisar ser rateado item a item, é aqui |
 | 13 | ~~Excluir ou editar movimentação de estoque não desfaz o custo médio~~ | **Resolvido em 31/07/2026**: custo passou a ser recalculado por releitura do histórico. Ver detalhamento abaixo |
 | 14 | ~~Gratuidade combinada com Crediário gera recebível com valor cheio~~ | **Resolvido em 31/07/2026**: função `registrar_venda` corrigida para zerar também `contas_receber.valor` nesse caso. Testado com pedido real (Gratuidade + Crediário), recebível confirmado em R$ 0,00, dado de teste removido |
 | 15 | ~~Endpoint `olv2-dados` não devolve `telefone_norm`~~ | **Resolvido em 31/07/2026**: nó `Consultar Clientes T` do OLV2 Dados passou a incluir `telefone_norm` no SELECT; workflow publicado |
+| 18 | **Tabela de baixas não existe** | É a decisão 1 da seção 9.4 e nunca foi criada. Sem ela, `contas_receber.status` só aceita Em aberto ou Recebido, o que não representa o crediário: o cliente deve R$ 200 e paga R$ 50. **Bloqueia a tela de Contas a Receber** |
+| 19 | **`atualizar_venda` versus baixa parcial** | A função apaga e recria os pagamentos, e a baixa cairia por cascata. Quando a 18 for feita, a função precisa recusar pedido com recebimento lançado |
+| 20 | **Conta de destino não preenchida** | Nenhuma das 8 formas nem a maquininha Rede têm `conta_destino_id`. Sem isso o Fluxo de Caixa não sabe onde o dinheiro cai. **Rogério resolve na tela de Cadastros, sem depender de sessão** |
+| 21 | **Saldo inicial das contas zerado** | As 4 contas estão com `saldo_inicial` em 0,00 e `data_inicial` vazia. O Fluxo de Caixa começaria do zero em vez do saldo real. **Também é da tela de Cadastros** |
+| 22 | **Anexo de boleto sem caminho** | Zero buckets no Storage, e a regra da seção 2 diz que o navegador nunca fala direto com o Supabase. Falta decidir por onde o arquivo sobe: n8n recebe e grava, ou exceção só para Storage. Trava a tela de Contas a Pagar |
+| 23 | **Código morto no painel** | O formulário de edição leve deixou de ser usado quando a edição completa entrou em 01/08/2026. Remover numa próxima passada |
 
 A numeração 11, 12, 16 e 17 fica na seção 8.3, porque são pendências de segurança e de acesso. A série é única.
 
@@ -386,17 +455,18 @@ Então não existem três bandeiras para efeito de taxa, existem **dois grupos**
 
 Quando a taxa mudar, não se edita a linha: encerra-se a vigente e cria-se a nova. Motivo idêntico ao da pendência 13: **a taxa aplicada é copiada para o pagamento no momento da venda**, e sobrescrever o cadastro reescreveria a margem de meses já fechados. É a mesma regra do custo, na seção 3.4.
 
-#### A tabela de formas de pagamento ainda não está ligada
+#### A tabela de formas de pagamento está ligada desde 01/08/2026
 
-**Aviso importante, gravado também como comentário na própria tabela.** A função `registrar_venda` continua com o comportamento das 8 formas escrito dentro do código, e `pagamentos.forma` continua com lista fechada no banco.
+A religação foi feita junto com a captura da taxa do cartão, numa operação só, para não mexer duas vezes na função de maior risco do sistema. O comentário da tabela no banco, que avisava o contrário, foi corrigido na mesma sessão.
 
-Enquanto a religação não acontecer:
+O que passou a valer:
 
-- Editar `gera_recebivel`, `prazo_dias`, `zera_pedido` ou `exige_vencimento` **não muda nada** no sistema.
-- **Criar forma nova não funciona**, porque a gravação seria recusada pela lista fechada.
-- Editar nome, ordem, taxa padrão, prazo de crédito, conta destino e ativo funciona, porque são campos novos que ninguém consome ainda.
+- Editar `gera_recebivel`, `prazo_dias`, `zera_pedido`, `exige_vencimento` e `usa_maquininha` **muda o comportamento na hora**.
+- **Criar forma nova continua bloqueado**: a lista fechada em `pagamentos.forma` foi mantida de propósito, como segunda trava.
+- **Excluir forma passou a ser impossível**, por gatilho. Antes era um buraco, ver o bloco de exclusão adiante.
+- **Forma desativada é recusada na gravação.** Desativar Pix hoje faz o sistema recusar venda em Pix, que é o comportamento correto de "desativado" e não existia antes.
 
-A religação é tarefa própria, em Opus 5, porque a `registrar_venda` é a função que grava todo pedido numa transação só e está em produção. Ela deve ser feita **uma vez só**, junto com a captura da taxa do cartão, para não operar duas vezes a função de maior risco do sistema. Depende da decisão em aberto da seção 9.4.
+**O risco aceito continua o mesmo**: comportamento em campo dá flexibilidade e dá poder de errar. As travas cobrem as combinações contraditórias, mas não cobrem o erro plausível, como marcar "exige vencimento" no Dinheiro. A tela de cadastro ainda não avisa antes de salvar.
 
 #### Travas de coerência
 
@@ -414,7 +484,19 @@ Com o comportamento virando dado, a coerência dele passa a ser responsabilidade
 
 #### Regra de exclusão, comum a todos os cadastros
 
-Enquanto o registro não tiver sido usado em nenhum lançamento, pode excluir. **Depois de usado, desativa em vez de excluir.** É o mesmo princípio que já protege cliente e produto com lançamento ligado: apagar uma forma de pagamento levaria junto o histórico das vendas que a usaram.
+Enquanto o registro não tiver sido usado em nenhum lançamento, pode excluir. **Depois de usado, desativa em vez de excluir.** É o mesmo princípio que já protege cliente e produto com lançamento ligado.
+
+**A regra não estava funcionando (descoberto e corrigido em 01/08/2026).** Ela não é decidida por consulta: o `cadastro_operar` **tenta o DELETE e só desativa quando o banco recusa com violação de chave**. A regra inteira depende de existir uma chave que recuse. Onde não havia, a regra simplesmente não acontecia.
+
+| Cadastro | O que acontecia | Correção |
+|---|---|---|
+| `maquininhas` | `taxas_cartao` tinha **ON DELETE CASCADE**. Excluir a Rede apagaria as 8 taxas em silêncio, e a desativação nunca era acionada | Chave trocada para **ON DELETE RESTRICT** |
+| `formas_pagamento` | **Nenhuma chave aponta para ela**, porque `pagamentos.forma` é texto. O DELETE sempre passava. Depois da religação, apagar uma linha quebraria toda venda naquela forma | Gatilho que recusa DELETE sempre |
+| `categorias_conta_pagar` | Mesmo caso, `contas_pagar.categoria` é texto | Gatilho que recusa DELETE quando já usada |
+
+`bandeiras` fica de fora de propósito: o grupo é copiado para o pagamento como texto, então excluir bandeira não corrompe histórico nenhum.
+
+**Ponto fraco que sobra**: a mensagem devolvida é sempre "Já usado em algum lançamento: desativado em vez de excluído". Para forma de pagamento é impreciso, porque o motivo real é a lista ser fechada. Melhoria de tela, sem urgência.
 
 ---
 
@@ -451,6 +533,16 @@ Prefixo OLV2 para não haver confusão com o conjunto em produção. **Ativados 
 | OLV2 Estoque (painel novo) | POST /webhook/olv2-estoque | `lancar`, `historico` |
 | OLV2 Clientes (painel novo) | POST /webhook/olv2-clientes | `criar`, `editar`, `buscar` |
 | OLV2 Cadastros (painel novo, 31/07/2026) | POST /webhook/olv2-cadastros | `listar`, `criar`, `editar`, `excluir` (ou `desativar` quando já usado), por tabela |
+
+**Alterações de 01/08/2026, todas publicadas:**
+
+| Workflow | O que mudou |
+|---|---|
+| **OLV Contas** | `allowedOrigins` liberado para a origem do painel, fechando a pendência 17. Ação nova `resetar_senha`, exclusiva do administrador |
+| **OLV2 Dados** | Consultas novas `Consultar Pagamentos T` e `Consultar Pagamentos P`, trazendo o valor por linha de pagamento e o vencimento do recebível. Campos novos da view incluídos e filtrados por papel. Totais passaram a contar só pedido concluído e ganharam `taxa_cartao`, `lucro_liquido`, `margem_liquida_pct`, `por_forma` e `pedidos_em_aberto` |
+| **OLV2 Pedido** | Ação nova `editar`, que chama a `atualizar_venda`. O nó `OK Criar` passou a devolver `avisos` |
+
+**Achado que evitou trabalho**: o nó `Prep Criar` do OLV2 Pedido repassa o array de pagamentos inteiro, sem mapear campo a campo. Por isso os campos de cartão passam direto para o banco, e o interruptor de bandeira não exigiu nenhuma mudança de workflow.
 
 **Confirmado ativo em 31/07/2026** (validação técnica da virada, seção 9.1): os quatro primeiros continuam ativos e no ar. O quinto, OLV2 Cadastros, foi construído e publicado na sessão seguinte, mesmo dia.
 
@@ -500,13 +592,25 @@ Tabela de estoque atual por produto, lançamento de Entrada, Ajuste e Estoque In
 
 Login com usuário e senha, crachá com nome e papel, troca de senha obrigatória no primeiro acesso, área de Usuários só para administrador, responsável preenchido automaticamente, trava de dono conferida também no servidor.
 
-**Não existe hoje**: redefinição de senha de outro usuário pelo administrador. Se alguém esquecer a senha, o caminho é criar usuário novo ou alterar na Data Table. Registrado como melhoria desejada.
+**Resolvido em 01/08/2026**: o administrador redefine a senha de outro usuário pela tela de Usuários. A ação `resetar_senha` gera sal e senha novos e **sempre marca a troca como pendente**, então quem redefine nunca fica sabendo a senha definitiva de ninguém.
+
+**A troca obrigatória do primeiro acesso acontece dentro do painel novo desde 01/08/2026.** Até então o login **bloqueava** quem tinha a marca de troca pendente, com a mensagem "troque a senha pelo painel atual". O painel atual saiu do ar em 31/07, então a saída indicada não existia mais e a pessoa ficava **trancada fora do sistema**. Foi o que aconteceu com a usuária Gabriele.
+
+Agora quem tem troca pendente entra numa tela isolada, sem menu e sem dados carregados, e só sai dela trocando a senha. A sessão só é guardada depois da troca, então recarregar a página não pula a etapa. O OLV Login não precisou de mudança: ele já devolvia o token junto com a marca.
 
 ### 5.4 Cadastros (construído em 31/07/2026)
 
 Tela exclusiva do administrador. Cobre as sete tabelas de cadastro do financeiro: produtos (edição do preço de venda sugerido), contas, maquininhas, bandeiras, taxas de cartão, formas de pagamento e categorias de conta a pagar.
 
 Regra geral: registro sem uso é excluído de verdade; registro já usado em algum lançamento tem o botão trocado para Desativar. Custo do produto (`custo_atual`, `custo_ultima_compra`) nunca editável pela tela, só o preço de venda sugerido. Taxa de cartão nunca é sobrescrita, sempre sucede a vigência anterior. Criação de forma de pagamento nova bloqueada, porque a lista é fechada no banco (ver 3.12).
+
+### 5.5 Usuários (construído em 01/08/2026)
+
+Tela exclusiva do administrador, ligada ao OLV Contas. Faz listar, criar, mudar papel, ativar, desativar, redefinir a senha de outra pessoa e trocar a própria.
+
+Duas travas de coerência: ninguém desativa a si mesmo, e a coluna "Primeiro acesso" mostra quem está com a troca de senha pendente.
+
+**Nota de contrato**: o OLV Contas usa `action`, não `acao`, porque é anterior aos endpoints OLV2. Mantido como está de propósito. Mexer no contrato do fluxo de acesso em produção é risco sem ganho.
 
 ---
 
@@ -576,7 +680,39 @@ Lucro do pedido = valor_total (já com desconto e acréscimo) − soma dos custo
 
 **Desconto e acréscimo são colunas separadas (31/07/2026)**, e não um único campo que aceita negativo. Motivo: assim o relatório de descontos concedidos no mês não se anula com os acréscimos cobrados. Num campo só, R$ 500 de desconto e R$ 500 de acréscimo apareceriam como zero, e os dois números se perderiam.
 
-**A taxa da maquininha ainda não entra neste cálculo.** Enquanto a decisão da seção 9.4 estiver aberta, a margem de toda venda no cartão está otimista. Ver o bloco em aberto da 9.4.
+**A taxa da maquininha entra no cálculo desde 01/08/2026**, sem substituir a margem bruta. A `vw_pedidos` passou a trazer as duas, lado a lado. Decisão do Rogério, detalhada na seção 9.4.
+
+Prova numérica, botijão de R$ 120 com custo de R$ 87:
+
+| Forma | Taxa | Margem bruta | Margem líquida |
+|---|---|---|---|
+| Dinheiro | 0,00 | 27,50% | 27,50% |
+| Débito Padrão | 0,83 | 27,50% | 26,81% |
+| Débito Outras | 1,79 | 27,50% | 26,01% |
+| Crédito 3x Outras | 6,18 | 27,50% | 22,35% |
+
+A diferença de R$ 0,96 entre débito Padrão e Outras é exatamente a que a seção 3.12 previu.
+
+### Faturamento conta só pedido concluído (decidido em 01/08/2026)
+
+Até esta data o estoque baixava na conclusão mas o faturamento contava desde o lançamento: **dois critérios diferentes para o mesmo pedido**. Agora é um só, o da conclusão.
+
+Vale para os quatro indicadores do Dashboard, para a margem do período, para a lista de quantidade por produto e para os valores por forma de pagamento. O Dashboard mostra uma linha discreta dizendo quantos pedidos do período seguem em aberto, para o número não parecer que sumiu quando se lança uma venda.
+
+### Correção de custo do primeiro dia de uso (01/08/2026)
+
+O Estoque Inicial do Gás 13kg foi lançado com **quantidade 37 e custo 37,00**. O custo real é 87,00. Os outros cinco produtos bateram com a planilha; só o gás repetiu a quantidade no campo de custo.
+
+Efeito: cada botijão aparecia rendendo R$ 88,00 em vez de R$ 38,00, e a margem do dia aparecia em 63,17% em vez de 34,35%.
+
+Corrigido em **duas frentes**, porque o custo vive em dois lugares por desenho:
+
+1. `produtos.custo_atual`: o Estoque Inicial errado foi excluído e relançado com custo 87,00, pelo caminho que esta seção já define, com observação registrada na própria movimentação.
+2. `venda_itens.custo_unitario`: corrigido nas 4 vendas de gás já lançadas. **Nem relançar a movimentação, nem editar o pedido resolveria isso**, porque o custo do item é congelado no momento da venda e a `atualizar_venda` preserva o original de propósito.
+
+Conferido depois: saldo de estoque inalterado em 34 botijões, faturamento inalterado, lucro do dia caindo de R$ 438,28 para R$ 238,28, exatamente os R$ 200,00 previstos pela conta.
+
+**Regra que fica**: erro de digitação no custo do Estoque Inicial exige as duas correções. Corrigir só a movimentação deixa o lucro das vendas já feitas errado para sempre.
 
 Lucro do item = valor do item − custo do item, **bruto, sem o desconto do pedido**. Serve para saber qual produto rende mais.
 
@@ -607,6 +743,8 @@ A proteção fica onde está o risco, não onde está a tela.
 | **Ajuste de estoque** | **Qualquer usuário ativo** | **Corrige saldo e não toca em custo.** O banco recusa Ajuste com custo |
 | **Excluir movimentação** | **Só administrador** | **Liberado em 31/07/2026**, depois que a releitura passou a desfazer o efeito no custo |
 | **Cadastros do financeiro** (criar, editar, excluir ou desativar) | **Só administrador** | **Construído em 31/07/2026.** Tela inteira é financeira e de configuração, sem uso operacional para o colaborador |
+| **Editar pedido por completo** (itens, valores, forma de pagamento) | **Dono do lançamento ou administrador** | **Liberado em 01/08/2026.** Mesma regra do `editar_leve`, porque é a mesma categoria de risco: irreversível na prática |
+| **Redefinir senha de outro usuário** | **Só administrador** | **Criado em 01/08/2026.** Conferido no servidor, com trava positiva sobre `admin` |
 
 **Por que Entrada é exclusiva do administrador.** O custo unitário é um dos sete pontos financeiros protegidos da seção 8.1. Se o colaborador não pode informar custo, uma Entrada lançada por ele entraria sem custo e não atualizaria a média, deixando o lucro errado sem aviso. Fechar a Entrada e abrir o Ajuste mantém o número do custo confiável sem travar a operação do dia a dia.
 
@@ -655,7 +793,14 @@ Mecanismo indireto, em duas etapas, que já causou incidente. Quem for mexer em 
 | `venda_itens` | `custo_unitario`, `custo_total`, `lucro` |
 | `produtos` | `custo_atual`, `custo_ultima_compra`, `custo_atualizado_em` |
 | `estoque_movimentacoes` | `custo_unitario` |
+| `pagamentos` (01/08/2026) | `taxa_pct`, `taxa_valor`, `valor_liquido`. **Forma, valor, vencimento, grupo, modalidade e parcelas continuam saindo**, porque o colaborador precisa deles para corrigir o pedido na entrega |
 | Totais agregados | **Não são sequer calculados** |
+
+**Ampliado em 01/08/2026**, junto com os campos novos da view. A lista de campos a remover virou constante nomeada no topo do código dos nós `Filtrar Saída`, `FIN_PEDIDO` e `FIN_PAGAMENTO`, para o próximo campo novo ter um lugar óbvio para entrar. Os campos financeiros da `vw_pedidos` que entraram são `taxa_total`, `lucro_liquido`, `margem_liquida_pct` e `recebido_liquido`.
+
+**Achado tranquilizador da auditoria**: os nós que consultam a `vw_pedidos` listam colunas nomeadas, não usam `select *`. Por isso os campos novos **não vazaram em nenhum momento**, nem entre a criação da view e o ajuste do filtro. É o motivo registrado na seção 3.9 para preferir lista plana com campos nomeados, funcionando na prática.
+
+`acrescimo` sai para todos os papéis, como `desconto` já saía. É operacional, não financeiro.
 
 ### 8.2 Incidente de 28/07/2026 e correção
 
@@ -678,7 +823,7 @@ Naquele workflow havia a única comparação negativa do lado servidor: `papel =
 | 11 | **Valor Total enviado a todos os papéis** | Ver detalhamento abaixo |
 | 12 | ~~Ticket médio exposto ao colaborador~~ | **Resolvido em 30/07/2026**: o indicador saiu do painel novo, e o Dashboard passou a ser exclusivo do administrador |
 | 16 | ~~Views e funções acessíveis direto pela API do Supabase, sem passar pelo n8n~~ | **Resolvido em 31/07/2026**: acesso dos papéis públicos revogado e privilégio padrão fechado. Ver detalhamento abaixo |
-| 17 | **Gestão de usuários sem caminho no painel novo** | Aberta em 31/07/2026. Ver detalhamento abaixo |
+| 17 | ~~Gestão de usuários sem caminho no painel novo~~ | **Resolvida em 01/08/2026**, em três frentes. Ver detalhamento abaixo |
 
 **Pendência 11, detalhada.**
 
@@ -747,9 +892,23 @@ O workflow OLV Contas continua ativo e funcional, mas o nó de webhook dele est�
 
 O que fica sem caminho pela tela nova: criar usuário, mudar papel, ativar e desativar acesso, e **a troca de senha obrigatória do primeiro acesso**. Enquanto isso não for resolvido, essas ações se fazem editando a Data Table `OLV Usuarios` direto no n8n.
 
-**Correção**: liberar `allowedOrigins` no webhook do OLV Contas e ligar a tela de Usuários do painel novo, ou construir um OLV2 Contas. É execução do que já está especificado, portanto **Sonnet 5**.
+**Era pior do que este diagnóstico.** O painel novo não só deixava de alcançar a gestão de usuários: ele **bloqueava o login** de quem tinha `precisa_trocar_senha`, com a mensagem "troque a senha pelo painel atual". O painel atual foi desativado em 31/07, então a saída indicada não existia mais e a pessoa ficava **trancada fora do sistema**, sem caminho nenhum. Aconteceu com a usuária Gabriele.
 
-**Ponto de atenção imediato**: se algum usuário estiver com `precisa_trocar_senha` marcado como verdadeiro, ele não consegue concluir a troca pelo painel novo. Conferir a Data Table `OLV Usuarios` antes de liberar o acesso para a equipe.
+**Resolvida em 01/08/2026, em três frentes indissociáveis:**
+
+| Frente | O que mudou |
+|---|---|
+| **CORS** | O nó `Contas Webhook` estava com `options` vazio. Recebeu `allowedOrigins` com a origem específica do painel, no padrão dos outros cinco |
+| **Redefinição por administrador** | Ação nova `resetar_senha` no OLV Contas. Gera sal e senha novos e marca a troca como pendente, então quem redefine nunca fica sabendo a senha definitiva de ninguém |
+| **Troca obrigatória dentro do painel** | O login deixou de bloquear. Quem tem troca pendente entra numa tela isolada, sem menu e sem dados, e só sai dela trocando a senha. A sessão só é guardada depois, então recarregar não pula a etapa |
+
+**Por que as três juntas**: sem a terceira, a redefinição recriaria a mesma trava que ela resolve.
+
+**O OLV Login não precisou de mudança**: ele já devolvia o token junto com a marca de troca pendente, então o fluxo mais crítico em produção ficou intocado.
+
+**Auditoria do OLV Contas, feita junto (regra 8)**: todas as travas de papel são positivas sobre `admin`, nenhuma comparação negativa contra rótulo, nó Crypto com `type` e `encoding` gravados. De acordo com a regra da 8.2.
+
+**Testado**: fluxo completo de redefinição, e a recusa quando quem chama é colaborador, com o nó de gravação nem chegando a rodar.
 
 ### 8.4 Toda gravação viaja em base64 (30/07/2026)
 
@@ -780,6 +939,38 @@ Achado nos testes reais desta sessão, em dois workflows que já estavam publica
 
 **Regra que fica**: todo `queryReplacement` novo que monte lista ou possa resolver para vazio precisa desse cuidado. Vale para qualquer nó Postgres novo no projeto, não só os três corrigidos.
 
+### 8.6 Função nova nasce aberta (achado em 01/08/2026)
+
+**A regra escrita na seção 3.10 até a v3.8 estava errada.** Ela afirmava que "objeto novo no schema `public` nasce fechado", como resultado dos privilégios padrão aplicados em 31/07. Testado três vezes nesta sessão, com o mesmo resultado:
+
+| Objeto novo criado por `postgres` no schema `public` | Nasce |
+|---|---|
+| Tabela | **Fechada**, só `postgres` e `service_role` |
+| Função | **Aberta**, com execução para `PUBLIC` |
+
+Tentar corrigir pelo caminho óbvio não resolve: `ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC` foi aplicado e a função criada em seguida continuou nascendo aberta.
+
+**O que ainda protege hoje**: `anon` e `authenticated` não têm `USAGE` no schema `public`, então não alcançam nem o schema. É uma tranca só, e ela é a única. Se alguém devolver o `USAGE` por engano, tudo abre de uma vez.
+
+#### A rotina criada
+
+| Função | O que faz |
+|---|---|
+| `fechar_acesso_publico()` | Revoga `anon`, `authenticated` e `PUBLIC` em schema, tabelas, sequências e funções, e fecha os privilégios padrão do papel corrente. Idempotente. Não toca em `postgres` nem em `service_role` |
+| `auditar_acesso_publico()` | Lista todo objeto do schema e diz quais são alcançáveis por `anon`, `authenticated` ou `PUBLIC`. Já trata a armadilha da ACL nula em função, que significa aberta e não fechada |
+
+**Regra que fica, e que substitui a da 3.10**: toda migração termina com `select fechar_acesso_publico();` e a conferência `select * from auditar_acesso_publico() where anon or autenticado or publico;`, que precisa devolver **zero linhas**.
+
+**Testado de ponta a ponta**: com uma função e uma tabela abertas de propósito, mais `USAGE` devolvido para `anon`, a auditoria apontou os 3 pontos, o fechamento zerou os 3, e os objetos de teste foram removidos depois.
+
+#### Risco residual registrado
+
+Existe um privilégio padrão do papel `supabase_admin` no schema `public` que **libera tudo para `anon` e `authenticated`**. Ele não afeta o que as migrações criam, porque elas rodam como `postgres`, cujo privilégio padrão está fechado. Mas objeto criado por outro caminho pode nascer liberado. É mais um motivo para a rotina acima ser obrigatória e não opcional.
+
+#### Aviso do auditor resolvido no mesmo dia
+
+`cadastro_operar` era a única função com `search_path` livre, único aviso de nível WARN do auditor do Supabase. Fixado em `public, pg_temp` sem tocar no corpo, porque a função usa nomes sem schema. Restam **14 avisos** informativos do tipo `rls_enabled_no_policy`, que são o desenho e não falha. Eram 8 na v3.5 e passaram a 14 porque as 6 tabelas de cadastro entraram.
+
 ---
 
 ## 9. PLANO DE EVOLUÇÃO *
@@ -807,10 +998,15 @@ Ciclo de cada etapa: definir o escopo, implementar sem afetar o que funciona, te
 - 31/07: **pendência 13 encerrada por completo**: endpoint OLV2 Estoque ganhou a ação `excluir`, restrita ao administrador, e o botão correspondente foi publicado no painel. Seção 3.11.
 - 31/07: **workflow e tela de Cadastros construídos e publicados**, antecipando parte da etapa 9.7. Seções 3.12, 4.3 e 5.4.
 
+- 01/08/2026: **religação da `registrar_venda`** à tabela de formas e captura da taxa do cartão, fechando a decisão da 9.4.
+- 01/08/2026: **função `atualizar_venda`**, edição completa de pedido. Seção 3.10.
+- 01/08/2026: **pendência 17 resolvida** em três frentes. Seção 8.3.
+- 01/08/2026: **contagem física lançada** como Estoque Inicial nos 6 produtos, pelo próprio Rogério.
+
 #### Falta
 
-- Resolver a pendência 17: gestão de usuários sem caminho no painel novo. Seção 8.3.
-- Lançar a contagem física como Estoque Inicial no Supabase.
+- Publicar o painel v5 no Cloudflare, e depois redefinir a senha da Gabriele e conferir o CORS da tela de Usuários no navegador.
+- Preencher conta de destino nas formas e na maquininha (pendência 20) e saldo inicial das contas (pendência 21). São da tela de Cadastros.
 
 #### A virada, feita em 31/07/2026
 
@@ -949,6 +1145,31 @@ O filtro de "De/Até" com botão Buscar virou pills de atalho (Hoje, Ontem, 7 di
 
 A partir da imagem da logo (formato de ícone quadrado) enviada por Rogério: favicon (16px e 32px, aba do navegador), apple-touch-icon (180px, tela inicial do iPhone) e ícone de app via manifest (192px, "Adicionar à tela inicial" no Android), com a cor de fundo do app (`theme-color`) combinando com o painel. Os cantos, que na imagem original eram um quadrado preto sólido com a forma arredondada desenhada por dentro, foram recortados com transparência real (raio medido nos próprios pixels da arte, 186px) para o ícone ficar arredondado em qualquer fundo de aba, não só em tema escuro. Tudo embutido como dado direto no HTML, sem precisar de arquivos extras no deploy.
 
+#### Painel v5 (01/08/2026, entregue e ainda não publicado)
+
+**Interruptor de bandeira "Outras"**: aparece abaixo da linha de pagamento, só quando a forma é Crédito ou Débito, junto do seletor de parcelas, que só aparece no Crédito. Não é seletor de bandeiras, é interruptor de duas posições, como a 3.12 decidiu. O seletor oferece 1x, 2x e 3x, que é o que existe cadastrado; oferecer 4x geraria venda sem taxa. Quando a função devolve aviso, o painel mostra uma faixa âmbar dizendo que o pedido entrou mas com ressalva.
+
+**Tela de Usuários**: seção 5.5.
+
+**Edição completa de pedido**: o botão Editar passou a abrir **o mesmo formulário do lançamento**, preenchido. Reaproveitar em vez de escrever um segundo formulário é o que garante que a regra de pagamento e o interruptor de bandeira valham igual ao lançar e ao corrigir na entrega.
+
+**Nove correções de uso pedidas pelo Rogério no primeiro dia de operação:**
+
+| Ponto | O que era |
+|---|---|
+| Botão de fechar | Adicionado nos sete formulários, reaproveitando o Cancelar de cada um. Esc também fecha |
+| Formulário voltava ao topo, e o Tab não andava | **Era um bug só**: `renderizar()` reconstruía a página inteira a cada campo, o que destrói foco e rolagem. Campos numéricos passaram a corrigir só os números na tela; onde reconstruir é inevitável, foco e rolagem voltam ao lugar |
+| Cadastrar cliente de dentro do pedido | Abre o formulário de Clientes por cima, aproveita o que já foi digitado na busca e ao salvar já deixa o cliente escolhido |
+| Telas não atualizavam sozinhas | Saldo e custo vinham da carga do login. Agora toda gravação marca o que envelheceu e a tela busca de novo ao abrir |
+| Menu e topo rolavam junto | Presos. O menu rola por dentro quando não couber, para o Sair nunca sumir |
+| Tela de Usuários mal formatada | Faltava `usuarios` no mapa de títulos do topo, e os botões estavam numa grade de filtro que os esticava |
+
+Corrigido também o `tabindex` do interruptor de bandeira e do seletor de parcelas, que estavam fora da sequência do Tab por engano: a regra de 30/07 valia para botões de ação, não para campos.
+
+**Defeito encontrado fora da lista**: `totaisDoPeriodo` devolvia nulo quando a resposta não trazia os totais, e o Dashboard lia o campo direto. Uma resposta sem totais derrubava a tela inteira em branco. Blindado.
+
+**Código morto**: o formulário de edição leve deixou de ser usado. Pendência 23.
+
 #### Cuidados
 
 Performance com o volume crescendo; não quebrar o que já funciona; a aba de concluídos é a que mais cresce e sem filtro de período padrão vira o ponto de lentidão.
@@ -1000,9 +1221,9 @@ Seis tabelas criadas em 31/07/2026, detalhadas na seção 3.12: contas, maquinin
 
 **Taxas da Rede levantadas e gravadas** em 31/07/2026, com Pix confirmado sem taxa. Quadro completo na seção 3.12.
 
-#### Em aberto: o destino contábil da taxa da maquininha *
+#### Decidido: o destino contábil da taxa da maquininha
 
-Levantado em 31/07/2026 e **ainda sem decisão**.
+Levantado em 31/07/2026 e **fechado em 01/08/2026**.
 
 O documento trata Crédito, Débito e Gás do Povo como "dinheiro que já é da empresa mas ainda não chegou". **Só que não chega inteiro**: a operadora desconta a taxa antes de creditar. Uma venda de R$ 100 no crédito Elo vira R$ 96,49 na conta.
 
@@ -1023,9 +1244,38 @@ Três efeitos que hoje não estão previstos:
 | **Custo da venda** | A `vw_pedidos` subtrai a taxa do lucro. A margem passa a dizer quanto rendeu de verdade um botijão vendido no crédito Elo |
 | **Despesa operacional** | A margem segue bruta e a taxa aparece como conta a pagar, no resultado do mês |
 
-**Esta decisão bloqueia a religação da `registrar_venda`**, porque define as colunas novas de `pagamentos`. Enquanto estiver aberta, a margem de toda venda no cartão continua otimista. Decisão de Opus 5.
+**Decisão do Rogério em 01/08/2026: guardar as duas margens.**
 
-**Ainda não houve prejuízo**: até 31/07/2026 o sistema tem uma venda, feita em dinheiro. Se a decisão fechar antes das primeiras vendas no cartão, a margem nasce certa em vez de nascer torta e ser corrigida depois.
+As duas opções acima fechavam uma porta cada. A terceira saída não estava na mesa: como a taxa passa a ser gravada em coluna própria de qualquer jeito, a view calcula as duas margens ao mesmo tempo. Qual delas aparece no card vira **decisão de tela, reversível**, em vez de decisão de banco, e a função de maior risco do sistema não precisa ser operada duas vezes.
+
+A `vw_pedidos` passou a trazer `lucro` e `margem_pct` brutos, com o mesmo sentido de antes, mais `taxa_total`, `lucro_liquido`, `margem_liquida_pct` e `recebido_liquido`. Quadro numérico na seção 6.
+
+**Fechou antes da primeira venda no cartão**, então a margem nasceu certa em vez de nascer torta e ser corrigida depois.
+
+#### Decidido: cartão não vira recebível (01/08/2026)
+
+A pendência 9 tratava Crédito, Débito e Gás do Povo como um bloco só, todos virando linha em `contas_receber`.
+
+Depois da captura da taxa, cartão **não precisa** disso: a taxa está gravada, o valor líquido calculado e o prazo de crédito cadastrado. O Fluxo de Caixa projeta direto da tabela de pagamentos, mostrando o que a operadora vai creditar e quando. Ninguém dá baixa manual em algo que a operadora paga sozinha.
+
+**Gás do Povo continua virando recebível de verdade**, porque o repasse do programa pode atrasar ou vir diferente do previsto.
+
+#### Ordem alterada: o financeiro foi antecipado (01/08/2026)
+
+A seção 10 determinava que os endpoints do financeiro só seriam construídos depois da etapa 9.7, para não escrever a regra de permissão duas vezes.
+
+**O que mudou o argumento**: a tela de Cadastros já foi antecipada em 31/07 com o raciocínio de que a permissão ali é simples, administrador ou nada, sem depender do desenho de setores. O mesmo vale para Contas a Receber e Contas a Pagar. Quando a 9.7 chegar, entra um check a mais, não uma reescrita.
+
+**A 9.7 continua existindo** e continua sendo pré-requisito da pendência 11. Ela só deixa de bloquear o financeiro.
+
+#### O que já está pronto para o Dashboard da Fase 2
+
+| Indicador que faltava | Situação em 01/08/2026 |
+|---|---|
+| **Valores por forma de pagamento** | **Pronto no servidor.** `por_forma` vem nos totais, e a lista de pagamentos vem linha a linha. Falta a tela |
+| **Gráfico de evolução comparado ao mês anterior** | **Nenhum trabalho de servidor.** O painel já busca o período atual e o anterior. Falta a tela |
+| Lista "Atenção hoje", parte de estoque | Já vem, pelo saldo e pelo mínimo |
+| Lista "Atenção hoje", parte financeira | Depende da pendência 18 e do endpoint financeiro |
 
 ### 9.5 Fase 2: Controle de caixa *
 
@@ -1052,6 +1302,8 @@ Confirmar tudo com o contador antes da execução.
 ### 9.7 Fase 2: Setores e permissões por área *
 
 **Status**: definido em princípio, execução **depois da religação do Supabase**, para não construir controle de acesso sobre estrutura que será substituída.
+
+**Alterado em 01/08/2026**: esta etapa **deixou de bloquear o módulo financeiro**, que foi antecipado com permissão de administrador ou nada, pelo mesmo raciocínio que liberou a tela de Cadastros em 31/07. Ela continua sendo pré-requisito da pendência 11, que é o valor do pedido exposto ao colaborador. Motivo na seção 9.4.
 
 Separar duas coisas hoje misturadas:
 
@@ -1085,23 +1337,34 @@ Separar duas coisas hoje misturadas:
 |---|---|---|
 | 1º | Login multiusuário | Concluído e no ar |
 | 2º | Base de dados no Supabase | **Concluído.** Esquema, produtos, clientes, endpoints e segurança fechados. Virada feita em 31/07/2026 |
-| 3º | **Fase 1: painel operacional novo** | **No ar como sistema único desde 31/07/2026**, em painel.olvdistribuidora.com.br. Falta a pendência 17 e o Estoque Inicial |
-| 4º | Setores e permissões | Depois da virada, antes do financeiro, para os endpoints já nascerem com validação |
-| 5º | Contas a pagar e receber | **Desenho iniciado em 31/07/2026.** Endpoints só depois dos setores, ver 9.4 |
+| 3º | **Fase 1: painel operacional novo** | **No ar como sistema único desde 31/07/2026**, em painel.olvdistribuidora.com.br. Pendência 17 e Estoque Inicial resolvidos em 01/08/2026. Falta publicar o painel v5 |
+| 4º | **Contas a pagar e receber** | **Antecipado em 01/08/2026**, com permissão de administrador ou nada. Começa por Contas a Receber, que depende da pendência 18 (tabela de baixas). Ver 9.4 |
+| 5º | Setores e permissões | **Deixou de bloquear o financeiro em 01/08/2026.** Continua pré-requisito da pendência 11 |
 | 6º | Controle de caixa | Fase 2 |
 | 7º | Módulo fiscal | Visão de futuro |
 
+**Fechadas em 01/08/2026:**
+
+- ~~Pendência 17, gestão de usuários~~: resolvida em três frentes, seção 8.3.
+- ~~Destino contábil da taxa da maquininha~~: **guardar as duas margens**, seção 9.4.
+- ~~Edição de valores de pedido~~: existe, e **preserva o custo original** dos itens que já estavam no pedido, carimbando o custo de hoje só nos produtos novos. Seção 3.10.
+- ~~Recebíveis de terceiros~~: **cartão não vira recebível**, o Fluxo de Caixa projeta direto de `pagamentos`. Gás do Povo continua virando. Seção 9.4.
+- ~~Ordem entre setores e financeiro~~: financeiro antecipado, seção 9.4.
+
 **Decisões a fechar:**
 
-- **Pendência 17 (nova, seção 8.3)**: como devolver a gestão de usuários ao painel novo. Liberar CORS no OLV Contas e ligar a tela de Usuários, ou construir um OLV2 Contas. Execução em Sonnet 5.
-- **Destino contábil da taxa da maquininha (seção 9.4)**: custo da venda, entrando na margem de cada pedido, ou despesa operacional, aparecendo só no resultado do mês. Taxas já levantadas e gravadas. **Bloqueia a religação da `registrar_venda` e afeta a margem mostrada hoje.**
+- **Anexo de boleto (pendência 22)**: por onde o arquivo sobe para o Storage, já que o navegador nunca fala direto com o Supabase. Trava a tela de Contas a Pagar.
 - Setores: lista final, níveis internos e tratamento do histórico.
 - Pendência 11: quem atribui o entregador e como tratar Retirada e Aguardando.
-- Edição de valores de pedido: se a função preserva o custo original de cada item ou reestampa o custo do dia da edição.
-- Recebíveis de terceiros: crédito, débito e Gás do Povo, realizado na venda ou previsto até o crédito bancário.
 - Financeiro: categorias de contas a pagar.
 - Caixa: único ou por operador; o que entra como sangria e reforço; como tratar diferenças no fechamento.
 - Fiscal: ST do gás e vasilhame com o contador; CSC na SEFAZ-ES; inscrição estadual no provedor.
+
+**Ações do Rogério, fora de sessão:**
+
+- Publicar o painel v5, redefinir a senha da Gabriele e conferir o CORS da tela de Usuários no navegador.
+- Preencher conta de destino nas 8 formas e na maquininha (pendência 20).
+- Preencher saldo inicial e data inicial das 4 contas (pendência 21).
 
 ---
 
@@ -1120,6 +1383,8 @@ Separar duas coisas hoje misturadas:
 | Pontos de restauração (v1.4) | Painel 63bf15bb; Vendas 348ed17a; Estoque 2adfcba0 |
 | Identificadores dos workflows novos | Dados fi2DPaA6qL7MxwIV; Pedido aPr6vx4oesVfkLis; Estoque 3l15lOfGCeYqLEu7; Clientes ClsDIM8jVRB5fijC (v3.1); Cadastros fV9fzAM81cT2Pvma (31/07/2026) |
 | Banco de dados | Supabase PostgreSQL 17, projeto olv-distribuidora_sistema, região São Paulo. 8 tabelas de movimento, 6 de cadastro, 2 views, RLS ativa. **Papéis públicos sem acesso ao schema `public` desde 31/07/2026** |
+| Rotina de fechamento de acesso | `fechar_acesso_publico()` e `auditar_acesso_publico()`, criadas em 01/08/2026. Rodar depois de **toda** migração. Seção 8.6 |
+| Funções de gravação de pedido | `registrar_venda` (criar) e `atualizar_venda` (editar por completo). As duas numa transação só, as duas capturando a taxa do cartão |
 | Cadastros do financeiro | `contas`, `maquininhas`, `bandeiras`, `taxas_cartao`, `formas_pagamento`, `categorias_conta_pagar`. Criados em 31/07/2026, com workflow (OLV2 Cadastros) e tela publicados no mesmo dia. Seções 3.12, 4.3 e 5.4 |
 | Maquininha e taxas | Rede. Padrão (Mastercard e Visa) e Outras (Elo). Débito 0,69 e 1,49; crédito à vista 2,71 e 3,51; 2x 3,78 e 4,58; 3x 4,35 e 5,15. Tudo em 1 dia útil. Pix sem taxa |
 | Conexão n8n para Supabase | Session Pooler IPv4, host aws-0-sa-east-1.pooler.supabase.com, porta 5432, base postgres, usuário postgres.ggvfrnympdrqyqxgcyex, SSL ativo. Credencial "Supabase OLV" |
@@ -1135,7 +1400,8 @@ Separar duas coisas hoje misturadas:
 | Endpoint | Corpo mínimo |
 |---|---|
 | POST /webhook/olv2-dados | `{acao, token, de, ate}` |
-| POST /webhook/olv2-pedido | `{acao, token, venda, itens, pagamentos, idempotency_key}` ou `{acao, token, venda_id, ...}` |
+| POST /webhook/olv2-pedido | `{acao, token, venda, itens, pagamentos, idempotency_key}` ou `{acao, token, venda_id, ...}`. Ações: `criar`, `editar`, `status`, `editar_leve`, `excluir` |
+| POST /webhook/olv-contas | `{action, token, usuario, senha, papel, ativo}`. Ações: `listar`, `criar`, `papel`, `ativo`, `trocar_senha`, `resetar_senha`. **Usa `action`, não `acao`**, por ser anterior aos endpoints OLV2 |
 | POST /webhook/olv2-estoque | `{acao, token, tipo, produto_id, quantidade, custo_unitario, fornecedor}` |
 | POST /webhook/olv2-clientes | `{acao, token, nome, endereco, bairro, telefone}` ou `{acao, token, termo}` |
 | POST /webhook/olv2-cadastros | `{acao, token, tabela, ...campos da tabela}` |
@@ -1193,6 +1459,8 @@ Um modelo funciona como um profissional contratado por hora. O mais experiente r
 | 9.2 Painel | Arquitetura de navegação e performance | Opus 5 |
 | 9.2 Painel | Telas, estilo, componentes | Sonnet 5 |
 | 9.4 Financeiro | Regras e casos de borda | Opus 5 |
+| 9.4 Financeiro | Tabela de baixas e cálculo de status | Opus 5 |
+| 9.4 Financeiro | Endpoint e telas do financeiro | Sonnet 5 |
 | 9.4 Financeiro | Telas e cadastros | Sonnet 5 |
 | 9.5 Caixa | Regras de abertura, sangria e fechamento | Opus 5 |
 | 9.7 Setores | Modelo de permissões e filtragem no servidor | Opus 5 |
@@ -1233,3 +1501,4 @@ Primeira linha da resposta: **Modelo indicado: [X]. Motivo: [tipo de tarefa].** 
 | 31/07/2026 | 3.6 | **Pendência 13 resolvida e desenho do financeiro iniciado.** (a) Ao abrir o código apareceram **quatro falhas no custo médio, não uma**: além da exclusão que não desfazia, o lançamento retroativo já calculava contra o saldo de hoje, mudanças em venda concluída não recalculavam, e **erro de digitação no custo era incorrigível**, porque Ajuste não toca em custo, não havia exclusão e o cadastro não aceita custo digitado. Causa raiz: valor incremental sobre histórico editável. (b) Criada a função `recalcular_custo_produto`, que refaz a conta do zero lendo o histórico em ordem cronológica; removidos o gatilho `trg_custo_produto` e a função `atualiza_custo_produto`; criados três gatilhos que disparam em movimentação de estoque (INSERT, UPDATE e DELETE), item de pedido e mudança de status do pedido. Mecânica na seção 6. (c) Registrado que o lucro histórico não muda, porque `venda_itens.custo_unitario` é copiado no momento da venda. (d) Avaliado e descartado no mesmo dia: Ajuste com custo, por abrir um segundo caminho para alterar a base do lucro. (e) Criadas as seis tabelas de cadastro do financeiro (seção 3.12): `contas`, `maquininhas`, `bandeiras`, `taxas_cartao`, `formas_pagamento` e `categorias_conta_pagar`, com as taxas reais da Rede levantadas e gravadas. Regra de exclusão comum: sem uso, exclui; com uso, desativa, pelo mesmo motivo de cliente e produto. Taxa de cartão nunca se sobrescreve, se sucede, pelo mesmo motivo da pendência 13. (f) Criada `produtos.preco_venda`, preço sugerido que vai preencher o formulário de pedido, sem travar a negociação item a item. (g) Criada `vendas.acrescimo`, ao lado do desconto, **em coluna separada e não como desconto negativo**, para que o relatório de descontos concedidos não se anule com os acréscimos cobrados. Gatilhos de total e `registrar_venda` atualizados; testado com pedido real de R$ 60 em itens, R$ 5 de desconto e R$ 8 de acréscimo resultando em R$ 63, com a trava de consistência aceitando; dado de teste removido. (h) Registrada na seção 6 a limitação testada da contagem no mesmo dia: Estoque Inicial em produto que já teve Entrada no mesmo dia duplica o saldo, e o caminho correto ali é o Ajuste. (i) Detalhada na 9.4 a decisão em aberto do destino contábil da taxa, com a restrição técnica de que `pagamentos.valor` tem de continuar sendo o valor cheio, sob pena de quebrar a trava adiada. Essa decisão **bloqueia a religação da `registrar_venda`**. |
 | 31/07/2026 | 3.7 | Cabeçalho realinhado ao log (estava parado em 3.4) e a regra 7 detalhada com o caminho de resolução por commit, depois da reincidência de cache do mesmo dia. Sem mudança de conteúdo além disso. Seção 11. |
 | 31/07/2026 | 3.8 | **Sessão Sonnet 5: quatro tarefas do painel, três bugs de produção pré-existentes corrigidos, ajustes de uso.** (a) **Pendência 13 encerrada por completo**: o endpoint OLV2 Estoque ganhou a ação `excluir`, restrita ao administrador, com botão e confirmação em duas etapas no painel; a saída automática de venda concluída nunca mostra o botão, por ser calculada, não gravada. Seções 3.11, 7 e 9.2. (b) A coluna `vendas.acrescimo`, criada na v3.6 mas ainda sem uso no formulário, foi ligada à tela: seletor único de Desconto ou Acréscimo, nunca os dois ao mesmo tempo, validado também no servidor. Seção 9.2. (c) O campo de valor unitário do pedido passou a ser preenchido com `produtos.preco_venda` ao escolher o produto, continuando editável e negociável item a item. Seção 9.2. (d) **Construído e publicado o workflow OLV2 Cadastros** (`fV9fzAM81cT2Pvma`), antecipando parte da etapa 9.7 a pedido de Rogério: cobre as sete tabelas de cadastro do financeiro, com tela exclusiva do administrador e o mesmo bloco de entrada dos outros quatro endpoints. Seções 3.12, 4.2 e 5.4. (e) **Três bugs de produção encontrados e corrigidos**, sem relação com as quatro tarefas acima: a publicação dos quatro workflows OLV2 estava atrasada em relação ao painel já no ar, causando divergência entre o acréscimo enviado pelo painel e o que o backend antigo esperava, corrigida publicando os quatro; o `queryReplacement` do nó Postgres do n8n corta valor por vírgula e descarta parâmetro que resolve para string vazia, quebrando `Consultar Itens T` e `Consultar Itens P` do OLV2 Dados (lista de pedidos do período) e `Consultar Histórico` do OLV2 Estoque (filtro Tipo em branco); documentado como armadilha nova na seção 8.5, corrigido nos três nós e publicado. (f) **Ajustes de uso**: todas as telas com filtro de período passaram a carregar sozinhas ao abrir, sem precisar clicar em Buscar; Estoque ganhou painel de "Movimentações de hoje" na aba Produtos e passou a mostrar 7 dias por padrão na aba Histórico, com indicador colorido (verde para entrada, vermelho para saída) e datas sem horário; campo de data retroativa no formulário de pedido, corrigindo bug em que a data enviada ao servidor era sempre a de hoje; valor do pagamento preenchido automaticamente quando há uma única linha; cards de pedido mostrando só a data; coluna Endereço adicionada à tabela de Clientes. Seções 9.1 e 9.2. (g) Todos os dados de teste gerados na sessão, incluindo os do próprio Rogério durante a validação em produção, removidos do banco ao final, conferido por SQL. |
+| 01/08/2026 | 3.9 | **Sessão Opus 5: religação da `registrar_venda`, edição completa de pedido, pendência 17 resolvida e primeiro dia de operação real.** (a) **Decisão da seção 9.4 fechada: guardar as duas margens.** As duas opções do documento fechavam uma porta cada; a terceira saída faz a `vw_pedidos` calcular margem bruta e líquida ao mesmo tempo, deixando a escolha de qual mostrar como decisão de tela, reversível. `pagamentos` ganhou oito colunas de cartão, com `valor` continuando cheio pela trava adiada. (b) **`registrar_venda` religada** à tabela `formas_pagamento`, com conferência prévia campo a campo provando que o comportamento não mudou, e com captura da taxa do cartão. Nunca bloqueia a venda por taxa ausente: grava sem taxa e devolve aviso. (c) **Interruptor de bandeira "Outras"** na tela de venda, com seletor de parcelas só no crédito. (d) **Função `atualizar_venda` criada**: edição completa de pedido, inclusive já concluído. A proposta original de criar uma situação "Finalizado" foi descartada, porque criaria uma janela em que o produto já saiu e o sistema ainda o conta no depósito; descobriu-se que os gatilhos de 31/07 já resolviam o recálculo, e faltava só a função. Custo dos itens preserva o original e carimba o de hoje só nos produtos novos. (e) **Pendência 17 resolvida em três frentes indissociáveis**: CORS no OLV Contas, ação `resetar_senha` para o administrador, e troca de senha obrigatória dentro do painel novo. O diagnóstico da v3.8 subestimava o problema: o login **bloqueava** quem tinha troca pendente e mandava usar o painel antigo, desativado em 31/07, deixando a pessoa trancada fora do sistema. Aconteceu com a usuária Gabriele. (f) **Regra da seção 3.10 corrigida**: "objeto novo nasce fechado" está errado para funções. Tabela nasce fechada, **função nasce aberta**, testado três vezes, e `ALTER DEFAULT PRIVILEGES` não resolve. Criadas `fechar_acesso_publico()` e `auditar_acesso_publico()`, e a regra 9 das instruções. Nova seção 8.6. (g) **A regra de exclusão de cadastro não funcionava**: ela depende de o banco recusar o DELETE, e `formas_pagamento` e `categorias_conta_pagar` não são referenciadas por chave nenhuma, enquanto `taxas_cartao` apontava para maquininhas com CASCADE. Corrigido com RESTRICT e dois gatilhos. (h) **Erro de digitação corrigido no custo do Gás 13kg**: o Estoque Inicial foi lançado com quantidade 37 e custo 37,00, quando o real é 87,00, inflando o lucro do dia em R$ 200,00. Exigiu correção em duas frentes, porque o custo do item é congelado na venda. (i) **Faturamento passou a contar só pedido concluído**, mesmo critério do estoque, encerrando a divergência de dois critérios para o mesmo pedido. (j) **Cartão deixou de virar recebível** (pendência 9 redesenhada): o Fluxo de Caixa projeta direto de `pagamentos`. Gás do Povo continua virando. (k) **Financeiro antecipado**, deixando de esperar a etapa 9.7, pelo mesmo raciocínio que liberou os Cadastros em 31/07. (l) **Painel v5** com nove correções de uso pedidas no primeiro dia de operação, entre elas a perda de foco e de rolagem ao digitar, que eram um bug só. Cinco pendências novas registradas, 18 a 23, sendo duas de cadastro que dependem só do Rogério. |
