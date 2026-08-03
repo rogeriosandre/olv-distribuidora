@@ -3,7 +3,7 @@
 
 **Documentação do funcionamento e plano de evolução**
 
-Versão 4.0 · 01/08/2026
+Versão 5.0 · 03/08/2026
 Preparado para Rogério
 
 ---
@@ -27,11 +27,11 @@ Este documento é a fonte única de verdade do projeto. Quando você o mencionar
 
 ## 1. VISÃO GERAL
 
-O projeto é um painel operacional da OLV Distribuidora que roda no navegador, celular ou computador. Centraliza vendas, estoque, clientes e, na evolução planejada, o controle financeiro de contas a pagar e a receber.
+O projeto é um painel operacional da OLV Distribuidora que roda no navegador, celular ou computador. Centraliza vendas, estoque, clientes, contas a pagar, contas a receber e fluxo de caixa.
 
 O objetivo é dar autonomia para lançar e consultar o dia a dia do negócio em um só lugar, com cálculos automáticos de lucro e de saldo de estoque, sem depender de aplicativo instalado.
 
-**Estado atual**: existe uma versão do painel, acessível pela web, ainda operando sobre a base anterior. Desde 25/07/2026 o acesso é por login individual com papéis. O painel novo, sobre o Supabase, foi construído e publicado em 30/07/2026 em https://painel.olvdistribuidora.com.br (Cloudflare Workers), rodando em paralelo ao painel antigo até a virada.
+**Estado atual em 03/08/2026**: o painel novo é o sistema único desde a virada de 31/07/2026, acessível em https://painel.olvdistribuidora.com.br. Está em uso real, com pedidos, clientes, estoque e lançamentos financeiros de verdade. O acesso é individual, com papéis. Contas a Pagar, Contas a Receber e Fluxo de Caixa estão no ar. O arquivo mais recente é o **Painel OLV Distribuidora - v13.html**, com o upgrade visual aprovado por Rogério.
 
 **Decisão de 25/07/2026**: o sistema é construído do zero sobre o Supabase (PostgreSQL). Não há migração de dados antigos: o sistema começa vazio e vai sendo preenchido pelo uso, com apenas clientes, produtos e usuários inseridos na abertura.
 
@@ -49,7 +49,7 @@ O painel funciona 24/7 mesmo com o computador desligado. As dependências são o
 
 **Regra de arquitetura (29/07/2026)**: **o navegador nunca fala direto com o Supabase.** Toda leitura e gravação passa pelo n8n, que é onde a permissão é validada. Ver seções 3.10 e 8.
 
-**Status em 30/07/2026**: conexão n8n para Supabase ativa e testada. Esquema do banco concluído. Endpoints do painel novo construídos e ativados. Painel novo publicado e testado ponta a ponta (login, leitura e telas). Religação dos fluxos antigos e aposentadoria do painel atual seguem como pendência aberta da seção 9.1.
+**Status em 03/08/2026**: conexão n8n para Supabase ativa e testada. Esquema do banco e endpoints em produção. Os três workflows antigos de dados estão desativados e guardados como pontos de retorno. OLV Login e OLV Contas continuam ativos porque são a camada de acesso compartilhada. O navegador não fala direto com o Supabase.
 
 ### 2.1 Camada de login e usuários
 
@@ -67,9 +67,9 @@ O painel funciona 24/7 mesmo com o computador desligado. As dependências são o
 
 ## 3. ESTRUTURA DE DADOS (SUPABASE)
 
-Cada assunto vive em uma tabela própria, ligada às outras por um código (ID). **Oito tabelas de movimento, seis de cadastro e duas views.** Tranca de segurança (RLS) ativa em todas.
+Cada assunto vive em uma tabela própria, ligada às outras por um código (ID). **Nove tabelas de movimento, seis de cadastro e quatro views de apoio.** Tranca de segurança (RLS) ativa em todas as tabelas.
 
-As oito de movimento guardam o que acontece: clientes, produtos, vendas, venda_itens, pagamentos, estoque_movimentacoes, contas_pagar e contas_receber. As seis de cadastro, criadas em 31/07/2026, guardam as regras e os parâmetros do negócio, e estão na seção 3.12.
+As nove de movimento guardam o que acontece: clientes, produtos, vendas, venda_itens, pagamentos, estoque_movimentacoes, contas_pagar, contas_receber e baixas. As seis de cadastro, criadas em 31/07/2026, guardam as regras e os parâmetros do negócio, e estão na seção 3.12.
 
 **Reestruturação de 30/07/2026**: a venda deixou de ser uma linha por produto e passou a ser um **pedido com vários itens**. Motivo na seção 3.4.
 
@@ -215,11 +215,11 @@ Uma venda pode ter várias linhas aqui, o que permite pagamento dividido.
 | Débito | Não, ver Fase 2 | recebível de terceiro |
 | Dinheiro | Não | entra no caixa |
 | Em aberto | **Sim** | data da venda + 3 dias |
-| Gás do Povo | Não, ver Fase 2 | repasse do programa em 3 dias úteis |
+| Gás do Povo | **Sim** | repasse do programa em 3 dias úteis |
 | Gratuidade | Não | zera o pedido, ver abaixo |
 | Pix | Não | entra no caixa |
 
-**Crédito, Débito e Gás do Povo formam uma família**: dinheiro que já é da empresa mas ainda não chegou, com um terceiro no meio. Ficam para a Fase 2 e serão tratados juntos. Na Fase 1 gravam em `pagamentos` normalmente, só não geram recebível.
+**Crédito e Débito não geram conta a receber.** O Fluxo de Caixa projeta o valor líquido diretamente de `pagamentos`, na data calculada pelo prazo da maquininha. **Gás do Povo gera recebível de verdade**, porque o repasse do programa pode atrasar ou vir diferente. O vencimento é calculado em 3 dias úteis, e a conta de destino só é escolhida na baixa, quando o dinheiro realmente entra. A correção de 02/08/2026 também reparou as vendas de Gás do Povo que tinham ficado sem recebível, sem duplicar as que já estavam corretas.
 
 **Gratuidade (decidido em 30/07/2026)**: o pedido entra com `valor_total` zero. Baixa estoque normalmente e o custo aparece como prejuízo daquele lançamento. Não entra no faturamento nem no caixa. A função de gravação zera os valores sozinha quando essa forma é escolhida, inclusive o valor do recebível gerado por uma linha de Crediário no mesmo pedido (corrigido em 31/07/2026, ver pendência 14 na seção 3.11).
 
@@ -248,6 +248,17 @@ Uma venda pode ter várias linhas aqui, o que permite pagamento dividido.
 | vencimento, pago_em | Data | Opcionais |
 | status | Texto | **Validado**: Em aberto ou Pago |
 | anexo_url | Texto | Endereço do boleto no Supabase Storage |
+| serie_id | ID | Agrupa as contas geradas juntas |
+| parcela_numero, parcela_total | Número | Posição da conta dentro da série |
+| modo_geracao | Texto | **Validado**: Única, Repetição ou Parcelamento |
+| periodicidade | Texto | **Validado**: Mensal ou Semanal |
+| estoque_movimentacao_id | Ligação | Aponta para a Entrada de estoque que originou a conta, quando houver |
+
+**Contas a Pagar concluída em 02/08/2026.** A view `vw_contas_pagar` calcula valor pago, saldo, atraso e dias de atraso. As funções `criar_pagar`, `editar_pagar` e `excluir_pagar` fazem as gravações. `criar_pagar` gera uma conta única ou uma série inteira. Em Repetição, o valor informado vale para cada ocorrência. Em Parcelamento, o valor informado é o total e o banco divide entre as parcelas, corrigindo os centavos na última.
+
+**Periodicidade.** A série pode ser Mensal ou Semanal. Na mensal, o sistema preserva o dia do primeiro vencimento e usa o último dia quando o mês for mais curto. Na semanal, soma 7 dias por ocorrência. Ao editar uma série, Rogério escolhe entre somente a conta atual e a atual mais as seguintes. Conta com baixa não pode ser editada nem excluída sem estornar antes.
+
+**Ligação com o estoque.** Na Entrada, gerar a conta a pagar é opcional. Quando marcado, fornecedor, quantidade e custo vêm da movimentação, a descrição é montada com o produto, a categoria é Mercadoria e o valor nasce de quantidade vezes custo unitário. Uma mesma Entrada não pode gerar duas contas a pagar.
 
 ### 3.8 contas_receber
 
@@ -278,24 +289,24 @@ Recebimentos e pagamentos parciais. É a pendência 18, que era a decisão 1 da 
 | valor | Número | **Maior que zero**, validado |
 | data | Data | Padrão é hoje |
 | forma | Texto | **Validado**: Dinheiro, Pix, Débito, Crédito, Transferência ou Ajuste |
-| conta_id | Ligação | Onde o dinheiro caiu. Aponta para contas, com RESTRICT |
+| conta_id | Ligação | Onde o dinheiro entrou ou de onde saiu. Aponta para contas, com RESTRICT |
 | observacao | Texto | **Obrigatória quando a forma é Ajuste** |
 | responsavel | Texto | Quem lançou. Vem do token, nunca do navegador |
 
 **Três travas.** `ck_baixa_um_pai` exige recebimento **ou** conta a pagar, um dos dois, nunca os dois nem nenhum. `ck_baixa_nao_excede` é adiada para o fim da transação e recusa baixa que passe do saldo em aberto. `ck_baixa_ajuste_motivo` exige explicação escrita quando a forma é Ajuste, porque Ajuste é a única forma que não corresponde a dinheiro entrando.
 
-**O status do pai é calculado, não digitado.** Um gatilho relê a soma das baixas a cada inserção, alteração ou exclusão e recalcula `contas_receber.status` para Em aberto, Parcial ou Recebido. É a mesma lógica que resolveu o custo médio na pendência 13: valor derivado de um histórico editável não se mantém de cabeça, se recalcula. Por isso a tela não tem botão de "marcar como recebido": teria dois lugares dizendo coisas diferentes sobre a mesma dívida.
+**O status do pai é calculado, não digitado.** Um gatilho relê a soma das baixas a cada inserção, alteração ou exclusão. Em `contas_receber`, recalcula para Em aberto, Parcial ou Recebido. Em `contas_pagar`, mantém Em aberto enquanto houver saldo e muda para Pago quando chegar a zero. É a mesma lógica que resolveu o custo médio na pendência 13: valor derivado de um histórico editável não se mantém de cabeça, se recalcula. Por isso as telas não têm botão de marcar como recebido ou pago: teriam dois lugares dizendo coisas diferentes sobre o mesmo compromisso.
 
 **Estorno apaga a baixa** e o status volta sozinho pelo mesmo gatilho.
 
-### 3.9 Como as tabelas se ligam, e as duas views
+### 3.9 Como as tabelas se ligam, e as views
 
 ```
 clientes ──→ vendas (pedido) ──┬──→ venda_itens ──→ produtos
-                               └──→ pagamentos ──→ contas_receber
+                               └──→ pagamentos ──→ contas_receber ──→ baixas
 
 produtos ──→ estoque_movimentacoes
-contas_pagar (independente)
+estoque_movimentacoes ──→ contas_pagar ──→ baixas
 ```
 
 Três níveis: um pedido, N itens, N pagamentos. É o desenho padrão de sistema de vendas.
@@ -319,6 +330,8 @@ Manter `lucro` e `margem_pct` com o nome e o sentido antigos é o que permitiu a
 **A `vw_pedidos` não traz os itens do pedido.** Ela diz "3 itens, 5 unidades", mas não diz quais produtos. Por isso o endpoint de leitura faz **uma segunda consulta** em `venda_itens` com a lista de pedidos do período. Decisão de 30/07/2026, tomada por auditabilidade: numa lista plana, o filtro de custo e lucro remove campos nomeados e se confere a olho nu. Num bloco JSON aninhado por pedido, repassar o bloco inteiro por descuido é uma linha de código que ninguém percebe olhando a tela. É a assinatura do incidente da seção 8.2.
 
 **`vw_estoque_atual`**: saldo por produto. Reconstruída em 30/07/2026, porque abatia estoque na data do pedido em vez da conclusão, contrariando a regra da seção 6. Agora só conta pedido concluído, pela `data_conclusao`.
+
+**`vw_contas_receber` e `vw_contas_pagar`**: deixam cada compromisso pronto para leitura, com valor baixado, saldo, situação, atraso e dias de atraso. As baixas continuam em linhas próprias, e o status do compromisso é recalculado pelo histórico.
 
 ### 3.10 Travas do banco
 
@@ -404,18 +417,18 @@ O que fica: se algum dia for preciso abrir algo para a API REST, a abertura é e
 | 6 | ~~Gatilho da baixa de estoque~~ | **Resolvido em 26/07/2026**: baixa na conclusão |
 | 7 | ~~pagamentos.forma não é validada~~ | **Resolvido em 30/07/2026**: 8 formas em lista fechada |
 | 8 | ~~contas_receber não aponta para o pagamento~~ | **Resolvido em 30/07/2026**: campo `pagamento_id` |
-| 9 | **Recebíveis de terceiros** | **Redesenhado em 01/08/2026**: cartão **não** vira recebível. A taxa já é capturada, o líquido calculado e o prazo cadastrado, então o Fluxo de Caixa projeta direto de `pagamentos`. **Gás do Povo continua virando recebível de verdade**, porque o repasse do programa pode atrasar ou vir diferente |
+| 9 | ~~Recebíveis de terceiros~~ | **Resolvido em 02/08/2026**: cartão não vira recebível e é projetado direto de `pagamentos`. Gás do Povo gera recebível com vencimento em 3 dias úteis. As vendas que tinham ficado sem a conta foram reparadas sem duplicidade |
 | 10 | **Lucro por item ignora o desconto** | Contornado pela view `vw_pedidos`. Se um dia o desconto precisar ser rateado item a item, é aqui |
 | 13 | ~~Excluir ou editar movimentação de estoque não desfaz o custo médio~~ | **Resolvido em 31/07/2026**: custo passou a ser recalculado por releitura do histórico. Ver detalhamento abaixo |
 | 14 | ~~Gratuidade combinada com Crediário gera recebível com valor cheio~~ | **Resolvido em 31/07/2026**: função `registrar_venda` corrigida para zerar também `contas_receber.valor` nesse caso. Testado com pedido real (Gratuidade + Crediário), recebível confirmado em R$ 0,00, dado de teste removido |
 | 15 | ~~Endpoint `olv2-dados` não devolve `telefone_norm`~~ | **Resolvido em 31/07/2026**: nó `Consultar Clientes T` do OLV2 Dados passou a incluir `telefone_norm` no SELECT; workflow publicado |
 | 18 | ~~Tabela de baixas não existe~~ | **Resolvida em 01/08/2026**: tabela `baixas` criada, com status do pai calculado por releitura. Seção 3.13 |
 | 19 | ~~`atualizar_venda` versus baixa parcial~~ | **Resolvida em 01/08/2026**: a função recusa pedido que já tenha baixa lançada, com mensagem explicando que é preciso estornar antes |
-| 20 | **Conta de destino não preenchida** | Nenhuma das 8 formas nem a maquininha Rede têm `conta_destino_id`. Sem isso o Fluxo de Caixa não sabe onde o dinheiro cai. **Rogério resolve na tela de Cadastros, sem depender de sessão** |
+| 20 | **Conta de destino não preenchida** | A regra foi corrigida em 02/08/2026: só pagamento que entra na hora precisa de conta de destino na forma. Crediário, Em aberto, Gratuidade e Gás do Povo não precisam, porque a conta é escolhida na baixa ou não existe dinheiro. Cartão usa a conta da maquininha. O preenchimento dos destinos aplicáveis continua sendo ação de Rogério na tela de Cadastros |
 | 21 | **Saldo inicial das contas zerado** | As 4 contas estão com `saldo_inicial` em 0,00 e `data_inicial` vazia. O Fluxo de Caixa começaria do zero em vez do saldo real. **Também é da tela de Cadastros** |
-| 22 | **Anexo de boleto sem caminho** | Zero buckets no Storage, e a regra da seção 2 diz que o navegador nunca fala direto com o Supabase. Falta decidir por onde o arquivo sobe: n8n recebe e grava, ou exceção só para Storage. Trava a tela de Contas a Pagar |
+| 22 | **Anexo de boleto sem caminho** | Zero buckets no Storage, e a regra da seção 2 diz que o navegador nunca fala direto com o Supabase. Falta decidir por onde o arquivo sobe: n8n recebe e grava, ou exceção só para Storage. **Trava somente o anexo**, não a tela de Contas a Pagar |
 | 23 | **Código morto no painel** | O formulário de edição leve deixou de ser usado quando a edição completa entrou em 01/08/2026. Remover numa próxima passada |
-| 24 | **Maquininha não tem prazo de crédito** | A tabela `maquininhas` guarda nome, conta de destino e ativo, e nada mais. O documento afirmava que o prazo estava cadastrado, e não está. O sistema sabe **quanto** a operadora vai pagar, porque a taxa está gravada, mas não sabe **quando**. **Bloqueia o Fluxo de Caixa**, que sem data não é projeção. Faltam dois campos, prazo do débito e prazo do crédito em dias, mais o preenchimento com os prazos reais |
+| 24 | ~~Maquininha não tem prazo de crédito~~ | **Resolvida em 02/08/2026**: criados `prazo_debito_dias` e `prazo_credito_dias`, ambos obrigatórios e não negativos. Rede preenchida com 1 dia útil para débito e crédito, inclusive parcelado. Desbloqueou o Fluxo de Caixa |
 | 25 | ~~Data aparecia um dia antes na tela~~ | **Resolvida em 01/08/2026**: data pura (AAAA-MM-DD) era lida pelo navegador como meia-noite em Londres, que no Brasil ainda é o dia anterior. O vencimento 03/08 aparecia como 02/08. Corrigido no formatador, que ancora ao meio-dia local. Data com hora, como a dos pedidos, nunca foi afetada |
 
 A numeração 11, 12, 16 e 17 fica na seção 8.3, porque são pendências de segurança e de acesso. A série é única.
@@ -450,7 +463,7 @@ Criados a pedido do Rogério, para que os parâmetros do negócio sejam **visív
 | Tabela | Guarda | Preenchida em 31/07 |
 |---|---|---|
 | `contas` | Onde o dinheiro para. Nome, tipo, banco, agência, número, saldo inicial | Banco Itaú, Banco Sicredi, Banco Digital, Caixa da Loja |
-| `maquininhas` | Operadora de cartão e a conta onde credita | Rede |
+| `maquininhas` | Operadora de cartão, conta onde credita e prazos do débito e do crédito em dias úteis | Rede, com 1 dia útil no débito e no crédito |
 | `bandeiras` | Mapeia a bandeira para o grupo de taxa | Mastercard e Visa em Padrão, Elo em Outras |
 | `taxas_cartao` | Taxa por maquininha, grupo, modalidade e parcelas, com vigência | 8 linhas da Rede |
 | `formas_pagamento` | As formas e o **comportamento** de cada uma | 8 formas espelhando o comportamento atual |
@@ -550,16 +563,16 @@ Até a v3.4 estes cinco eram tratados como um bloco só, "os fluxos antigos a ap
 
 ### 4.2 Do painel novo, sobre o Supabase (construídos em 30/07/2026)
 
-Prefixo OLV2 para não haver confusão com o conjunto em produção. **Ativados em 30/07/2026**, junto com a correção de CORS descrita na seção 9.2. O painel antigo continua intocado e no ar; os dois conjuntos rodam em paralelo até a virada.
+Prefixo OLV2 para não haver confusão com o conjunto anterior. **Ativados em 30/07/2026**, junto com a correção de CORS descrita na seção 9.2. Desde a virada de 31/07/2026, este é o conjunto de dados em produção. Os workflows antigos de dados ficam desativados como ponto de retorno.
 
 | Workflow | Endpoint | Ações |
 |---|---|---|
 | OLV2 Dados (painel novo) | POST /webhook/olv2-dados | `tudo` (carga inicial) e `pedidos` (recarga leve) |
-| OLV2 Pedido (painel novo) | POST /webhook/olv2-pedido | `criar`, `status`, `editar_leve`, `excluir` |
-| OLV2 Estoque (painel novo) | POST /webhook/olv2-estoque | `lancar`, `historico` |
+| OLV2 Pedido (painel novo) | POST /webhook/olv2-pedido | `criar`, `editar`, `status`, `editar_leve`, `excluir` |
+| OLV2 Estoque (painel novo) | POST /webhook/olv2-estoque | `lancar`, `historico`, `excluir`. A Entrada pode chamar `criar_pagar` na mesma operação |
 | OLV2 Clientes (painel novo) | POST /webhook/olv2-clientes | `criar`, `editar`, `buscar` |
 | OLV2 Cadastros (painel novo, 31/07/2026) | POST /webhook/olv2-cadastros | `listar`, `criar`, `editar`, `excluir` (ou `desativar` quando já usado), por tabela |
-| OLV2 Financeiro (painel novo, 01/08/2026) | POST /webhook/olv2-financeiro | `listar`, `criar`, `excluir`, `baixar`, `estornar` |
+| OLV2 Financeiro (painel novo, 01/08/2026) | POST /webhook/olv2-financeiro | Receber, Pagar, baixas, estornos e `fluxo_caixa`, detalhados na seção 4.4 |
 
 **Alterações de 01/08/2026, todas publicadas:**
 
@@ -616,12 +629,19 @@ Identificador `q4Bbzx7BSn6EiwjQ`, endereço `POST /webhook/olv2-financeiro`. Mes
 | `excluir` | Apaga recebimento manual que ainda não teve nenhuma baixa |
 | `baixar` | Chama a `registrar_baixa` |
 | `estornar` | Chama a `estornar_baixa` |
+| `listar_pagar` | Devolve contas a pagar, baixas, resumo do período, contas ativas, categorias e formas aceitas |
+| `criar_pagar` | Cria uma conta única, repetição ou parcelamento, mensal ou semanal |
+| `editar_pagar` | Edita somente a conta atual ou a atual e as seguintes |
+| `excluir_pagar` | Exclui somente a conta escolhida, desde que ela não tenha baixa |
+| `fluxo_caixa` | Chama `fluxo_caixa_consultar` para o intervalo informado |
 
 **Duas travas de administrador em série, não uma.** O workflow barra antes de tocar no banco, e a `financeiro_operar` barra de novo por dentro. Uma sozinha bastaria para o caminho normal; duas cobrem o dia em que alguém chamar o banco por outro caminho.
 
 **O `responsavel` da baixa vem do token, nunca do corpo enviado pelo navegador.** Mandar o nome pelo navegador seria confiar em quem está do outro lado para dizer quem é.
 
-**O resumo do topo é do total, não do filtro.** Os quatro cartões respondem "quanto tenho a receber", pergunta que não muda quando a pessoa filtra a lista. Se seguissem o filtro, o valor dançaria a cada clique e deixaria de servir de referência.
+~~O resumo do topo é do total, não do filtro.~~ **Superado em 02/08/2026 por decisão de Rogério.** Os cartões de Contas a Pagar e Contas a Receber agora respeitam o mesmo intervalo de vencimento da lista. O filtro de situação muda as linhas, mas os indicadores de vencimento usam o período escolhido. A mudança foi feita dentro de `financeiro_operar`, para a regra valer mesmo fora da tela.
+
+**Fluxo de Caixa acrescentado em 02/08/2026.** A ação `fluxo_caixa` usa o mesmo endpoint e chama `fluxo_caixa_consultar`. O workflow continua exclusivo do administrador e mantém as duas travas em série. A publicação foi feita substituindo o workflow ativo por uma nova cópia, e a versão anterior ficou desativada como backup.
 
 ---
 
@@ -629,15 +649,17 @@ Identificador `q4Bbzx7BSn6EiwjQ`, endereço `POST /webhook/olv2-financeiro`. Mes
 
 ### 5.1 Vendas
 
-Filtros de período, indicadores do período, quantidade por produto, valores por forma de pagamento, gráfico de evolução, formulário com autocompletar de cliente, editar e excluir com confirmação, filtros de consulta.
+O menu separa **Vendas**, que é o quadro operacional por situação, e **Pedidos**, que é a lista para consulta. As duas entradas reutilizam os dados e as regras já existentes.
+
+**Pedidos** abre mostrando o mês e permite filtrar por atalhos de período, datas manuais, cliente e forma de pagamento. Os totais do topo acompanham o filtro. O formulário mantém autocompletar de cliente, preço sugerido, pagamento dividido, edição completa e exclusão com confirmação.
 
 ### 5.2 Estoque
 
-Tabela de estoque atual por produto, lançamento de Entrada, Ajuste e Estoque Inicial, histórico com editar e excluir.
+O menu separa **Estoque**, com o saldo atual por produto, e **Movimentações**, com o histórico. O lançamento aceita Entrada, Ajuste e Estoque Inicial. Na Entrada, o administrador pode marcar a geração de conta a pagar, informar primeiro vencimento, quantidade e periodicidade. O histórico permite editar e excluir conforme as regras de permissão. A busca reage durante a digitação e o filtro Todos foi redimensionado.
 
 ### 5.3 Login, usuários e papéis
 
-Login com usuário e senha, crachá com nome e papel, troca de senha obrigatória no primeiro acesso, área de Usuários só para administrador, responsável preenchido automaticamente, trava de dono conferida também no servidor.
+Login com usuário e senha, crachá com nome e papel, troca de senha obrigatória no primeiro acesso, área de Usuários só para administrador, responsável preenchido automaticamente, trava de dono conferida também no servidor. Desde o painel v13, a tela de login usa o mesmo sistema visual do painel, com fundo de curvas suaves inspirado na identidade comercial da OLV, sem mudar a autenticação real.
 
 **Resolvido em 01/08/2026**: o administrador redefine a senha de outro usuário pela tela de Usuários. A ação `resetar_senha` gera sal e senha novos e **sempre marca a troca como pendente**, então quem redefine nunca fica sabendo a senha definitiva de ninguém.
 
@@ -647,7 +669,7 @@ Agora quem tem troca pendente entra numa tela isolada, sem menu e sem dados carr
 
 ### 5.4 Cadastros (construído em 31/07/2026)
 
-Tela exclusiva do administrador. Cobre as sete tabelas de cadastro do financeiro: produtos (edição do preço de venda sugerido), contas, maquininhas, bandeiras, taxas de cartão, formas de pagamento e categorias de conta a pagar.
+Tela exclusiva do administrador. Cobre as sete tabelas de cadastro do financeiro: produtos (edição do preço de venda sugerido), contas, maquininhas, bandeiras, taxas de cartão, formas de pagamento e categorias de conta a pagar. Maquininhas mostram e editam os prazos do débito e do crédito em dias úteis.
 
 Regra geral: registro sem uso é excluído de verdade; registro já usado em algum lançamento tem o botão trocado para Desativar. Custo do produto (`custo_atual`, `custo_ultima_compra`) nunca editável pela tela, só o preço de venda sugerido. Taxa de cartão nunca é sobrescrita, sempre sucede a vigência anterior. Criação de forma de pagamento nova bloqueada, porque a lista é fechada no banco (ver 3.12).
 
@@ -665,9 +687,9 @@ Duas travas de coerência: ninguém desativa a si mesmo, e a coluna "Primeiro ac
 
 Tela exclusiva do administrador, ligada ao OLV2 Financeiro. Fecha a primeira metade da etapa 9.4.
 
-Quatro indicadores no topo: em aberto, atrasado, vence hoje e próximos 7 dias. Quatro filtros de situação: Em aberto, Atrasados, Recebidos e Todos. Busca por cliente ou descrição, feita no servidor, por clique ou Enter, não a cada tecla.
+Quatro indicadores no topo: em aberto, atrasado, vence hoje e próximos 7 dias. Quatro filtros de situação: Em aberto, Atrasados, Recebidos e Todos. A busca por cliente ou descrição reage durante a digitação. Os indicadores acompanham o intervalo de vencimento escolhido.
 
-**Filtro de vencimento com horizonte.** Atalhos de 30 dias, 3 meses, 12 meses e sem limite, com 12 meses como padrão. Abaixo da barra fica escrito até que data a lista alcança, para nada sumir sem a pessoa perceber. Os campos de data continuam editáveis à mão, e mexer neles desliga o atalho.
+**Filtro de vencimento com horizonte.** A tela abre no mês atual. Atalhos de 30 dias, 3 meses, 12 meses e sem limite continuam disponíveis. Abaixo da barra fica escrito até que data a lista alcança, para nada sumir sem a pessoa perceber. Os campos de data continuam editáveis à mão, e mexer neles desliga o atalho.
 
 **Receber** abre um formulário já preenchido com o saldo, porque quitar de uma vez é o caso comum. Recebimento parcial é permitido: o que sobra continua em aberto e a situação passa a Parcial sozinha. Cada linha com baixas abre o histórico, mostrando quem lançou e quando, com botão de estornar.
 
@@ -680,6 +702,42 @@ Quatro indicadores no topo: em aberto, atrasado, vence hoje e próximos 7 dias. 
 | Botão "marcar como recebido" | A situação nasce da soma das baixas. Um botão criaria um segundo lugar dizendo outra coisa sobre a mesma dívida |
 | Crédito e débito na lista | Quem paga é a operadora, na data cadastrada da maquininha, e a taxa já está gravada desde a venda. Baixa manual em algo que cai sozinho é retrabalho que gera divergência |
 | Excluir recebimento vindo de pedido | Desfaz-se pelo pedido de origem. Ver 3.8 |
+
+---
+
+### 5.7 Contas a Pagar (construída em 02/08/2026)
+
+Tela exclusiva do administrador, ligada ao OLV2 Financeiro. Abre no mês atual e mantém o mesmo padrão de Contas a Receber: indicadores de em aberto, atrasado, vence hoje e próximos 7 dias; filtros de situação; busca durante a digitação; atalhos de vencimento; baixa parcial; histórico e estorno.
+
+**Incluir** permite conta única ou várias ocorrências geradas de uma vez. Rogério escolhe Repetição ou Parcelamento, periodicidade Mensal ou Semanal e quantidade. **Editar** pergunta se a mudança vale somente para a conta atual ou também para as seguintes. Conta com baixa exige estorno antes de edição ou exclusão.
+
+**Entrada de estoque.** A opção de gerar conta a pagar aparece somente em Entrada e somente para administrador. Ela não vem marcada por padrão, porque a geração continua opcional. O valor nasce da quantidade multiplicada pelo custo unitário.
+
+O campo de anexo ainda não existe. A pendência 22 trava apenas essa parte.
+
+### 5.8 Fluxo de Caixa (construído em 02/08/2026)
+
+Tela exclusiva do administrador. Abre no mês atual e oferece Hoje, Ontem, 7 dias, Este mês, Mês anterior, Tudo e datas manuais. A lista pode mostrar Todos, Entradas, Saídas, Realizados ou Previstos, com busca durante a digitação.
+
+Os indicadores usam rótulos curtos e acompanham o período: **Entrou**, **Saiu**, **A receber**, **A pagar** e **Previsão do período**. Valores realizados vêm das vendas que já movimentaram dinheiro e das baixas. Valores previstos vêm dos saldos a receber, saldos a pagar e cartões na data calculada. Uma conta a pagar ainda sem baixa é saída prevista, não saída realizada.
+
+**Cartão.** Crédito e Débito são projetados pelo valor líquido em `pagamentos`, somando o prazo em dias úteis da maquininha. A primeira versão considera segunda a sexta e ainda não tem calendário de feriados.
+
+**Conta de destino.** Dinheiro, Pix e outras formas que entram na hora usam `formas_pagamento.conta_destino_id`. Cartão usa `maquininhas.conta_destino_id`. Crediário, Em aberto e Gás do Povo escolhem a conta no momento da baixa. Gratuidade não movimenta dinheiro.
+
+A tela avisa quando a configuração financeira está incompleta. O movimento do período continua correto, mas o saldo final por conta só será confiável depois que Rogério preencher `saldo_inicial` e `data_inicial` das contas, pendência 21.
+
+### 5.9 Upgrade visual do painel v13 (03/08/2026)
+
+Aplicado ao HTML único depois de simulações visuais aprovadas por Rogério. Mantém azul, verde, branco e amarelo da identidade comercial da OLV, com curvas e brilho suaves no fundo, cartões profissionais, divisões mais claras e melhor aproveitamento do navegador. Não usa imagens ou bibliotecas externas, o que preserva o arquivo único e evita dependência de outro servidor.
+
+**Tema escuro.** Pode ser alternado no painel e a escolha fica guardada no navegador. Todas as telas, formulários, tabelas e a página de login seguem os dois temas.
+
+**Dashboard.** Abre no mês atual, com filtro compacto no topo. Traz Faturamento, Gastos, Lucro e Margem, cada um comparado ao período equivalente anterior. O gráfico com pontos alterna Faturamento, Quantidade de vendas e Lucro. O gráfico de rosca mostra a participação das formas de pagamento. Abaixo ficam Atenção hoje e Itens vendidos por período, em blocos proporcionais. Quando o servidor não fornece lucro diário confiável, o painel não inventa uma estimativa para o gráfico.
+
+**Clientes.** A tabela ganhou Com compra no mês e Ver histórico. O indicador usa os pedidos do primeiro dia do mês até hoje. Ver histórico abre a lista de Pedidos já filtrada pelo cliente.
+
+**Estoque.** Os indicadores visuais usam botijão e garrafa de água. O Fluxo de Caixa ficou sem gráfico por decisão de Rogério.
 
 ---
 
@@ -1195,9 +1253,9 @@ Ao publicar o painel no domínio final, o navegador bloqueava toda chamada aos c
 
 Ícones próprios para cada item do menu lateral, no lugar de um marcador genérico. Tela inicial após o login passa a ser o Dashboard para administrador, e Vendas para os demais papéis (antes era sempre Vendas).
 
-#### Cores da marca: testadas e mantidas as originais (decisão fechada em 31/07/2026)
+#### Cores da marca: ~~mantidas as originais~~ decisão superada em 03/08/2026
 
-As cores foram extraídas por amostragem de pixel direto do arquivo da logo (azul-marinho #013090, azul médio #0041BC, verde #82D602, mais um ciano #01C9FE na chama interna, fora da lista original) e aplicadas no CSS do painel novo para avaliação. **Rogério testou e decidiu manter as cores de trabalho originais**, já em uso desde a construção do painel: azul-marinho `#0b2545`, azul-médio `#1d6fd6`, verde `#1c9c5b`, amarelo `#e3a92b`, vermelho `#c0392b`. As cores extraídas da logo foram revertidas. Amarelo e vermelho nunca vieram da logo (são cores de alerta do painel) e seguem sem mudança.
+As cores foram extraídas por amostragem de pixel direto do arquivo da logo (azul-marinho #013090, azul médio #0041BC, verde #82D602, mais um ciano #01C9FE na chama interna, fora da lista original) e aplicadas no CSS do painel novo para avaliação. ~~Rogério testou e decidiu manter apenas as cores de trabalho originais.~~ **Em 03/08/2026, depois de novas referências visuais e duas simulações aprovadas, Rogério autorizou o upgrade visual com a identidade comercial da OLV.** O painel v13 combina os azuis e o verde da marca com amarelo para destaque e vermelho para alerta, mantendo contraste profissional nos temas claro e escuro.
 
 #### Bugs do menu lateral corrigidos (31/07/2026)
 
@@ -1239,6 +1297,12 @@ Corrigido também o `tabindex` do interruptor de bandeira e do seletor de parcel
 
 **Código morto**: o formulário de edição leve deixou de ser usado. Pendência 23.
 
+#### Painéis v7 a v13 (02 e 03/08/2026)
+
+As versões intermediárias construíram Contas a Pagar, periodicidade semanal, lista de Pedidos, filtros reativos, prazo das maquininhas, Fluxo de Caixa, correções dos indicadores e a regra do Gás do Povo. O **painel v13** consolida tudo e acrescenta o upgrade visual descrito na seção 5.9.
+
+**Status do v13 em 03/08/2026**: arquivo implementado e verificado localmente, com JavaScript válido, sem dependência externa e sem dados de teste. A simulação do login foi aprovada e conferida contra a implementação real. **Ainda falta Rogério publicar o HTML no Cloudflare e testar no endereço de produção.**
+
 #### Cuidados
 
 Performance com o volume crescendo; não quebrar o que já funciona; a aba de concluídos é a que mais cresce e sem filtro de período padrão vira o ponto de lentidão.
@@ -1255,15 +1319,15 @@ Pontos de segurança resolvidos: usuários fora do código, senha com hash, sess
 
 Duas seções próprias no painel, não sub-abas de um Financeiro único.
 
-**A receber**: recebíveis já são criados automaticamente pela função de gravação, para Crediário e Em aberto. Falta a tela, a baixa e os alertas de vencimento no Telegram. Entram também os recebíveis de terceiros: Crédito, Débito e Gás do Povo.
+**A receber, concluído em 01/08/2026**: recebíveis são criados automaticamente para Crediário, Em aberto e Gás do Povo. Tela, baixa parcial, estorno, lançamento manual e filtros estão no ar. Crédito e Débito não entram nesta lista, porque são projetados diretamente no Fluxo de Caixa. Alertas no Telegram continuam para uma etapa futura.
 
-**A pagar**: cadastro com fornecedor, descrição, valor, vencimento, status e categoria; ligação com as entradas de estoque, aproveitando o custo e o fornecedor já registrados; anexo de boletos no Storage; alertas no Telegram.
+**A pagar, concluído em 02/08/2026**: cadastro, baixa parcial, estorno, repetição, parcelamento, periodicidade mensal e semanal e ligação opcional com Entrada de estoque estão no ar. O anexo no Storage continua aberto na pendência 22, e os alertas no Telegram ficam para etapa futura.
 
-**Clientes**: histórico de pedidos por cliente e indicadores. O endpoint de manutenção de clientes já existe desde 30/07/2026; falta a consulta de histórico.
+**Clientes, concluído na tela em 03/08/2026**: indicador de compra no mês e acesso ao histórico pela lista de Pedidos. A implementação reaproveita a consulta de pedidos existente, sem criar endpoint novo.
 
 #### Desenho iniciado em 31/07/2026
 
-**Ordem confirmada**: o desenho das regras é feito agora, mas **os endpoints só são construídos depois da etapa 9.7**, conforme a seção 10 já determinava. Construir antes significaria escrever a regra de permissão duas vezes, e o financeiro é justamente o módulo que o setor "financeiro" define. Ver 9.7.
+~~Ordem confirmada: os endpoints só seriam construídos depois da etapa 9.7.~~ **Superado em 01/08/2026.** O financeiro foi antecipado com acesso exclusivo do administrador, e a futura regra de setores acrescentará uma camada sem reescrever o módulo. Motivo no bloco Ordem alterada desta seção.
 
 **Decisão 1: baixa parcial existe, com tabela própria.**
 
@@ -1339,42 +1403,35 @@ A seção 10 determinava que os endpoints do financeiro só seriam construídos 
 
 #### O que já está pronto para o Dashboard da Fase 2
 
-| Indicador que faltava | Situação em 01/08/2026 |
+| Indicador que faltava | Situação em 03/08/2026 |
 |---|---|
-| **Valores por forma de pagamento** | **Pronto no servidor.** `por_forma` vem nos totais, e a lista de pagamentos vem linha a linha. Falta a tela |
-| **Gráfico de evolução comparado ao mês anterior** | **Nenhum trabalho de servidor.** O painel já busca o período atual e o anterior. Falta a tela |
-| Lista "Atenção hoje", parte de estoque | Já vem, pelo saldo e pelo mínimo |
-| Lista "Atenção hoje", parte financeira | **Destravada em 01/08/2026**, com a pendência 18 e o endpoint prontos. Falta a tela |
+| **Valores por forma de pagamento** | **Concluído no painel v13.** Gráfico de rosca com participação percentual no período |
+| **Gráfico de evolução comparado ao período anterior** | **Concluído no painel v13.** Alterna Faturamento, Quantidade de vendas e Lucro, com pontos nos períodos |
+| Lista "Atenção hoje", parte de estoque | **Concluída no painel v13**, pelo saldo e pelo mínimo |
+| Lista "Atenção hoje", parte financeira | **Concluída no painel v13**, com conta que vence e recebível do dia |
 
 #### Contas a Receber concluída em 01/08/2026
 
 Tabela `baixas` (3.13), funções `registrar_baixa`, `estornar_baixa`, `criar_receber` e `excluir_receber`, view `vw_contas_receber`, despachante `financeiro_operar`, endpoint OLV2 Financeiro (4.4) e tela (5.6). A pendência 19 foi fechada junto, porque a `atualizar_venda` precisava recusar pedido com baixa lançada.
 
-#### O que falta para Contas a Pagar *
+#### Contas a Pagar concluída em 02/08/2026
 
-A fundação já existe: a tabela `contas_pagar` está criada desde o início, as categorias são cadastráveis pela tela de Cadastros desde 31/07, e `registrar_baixa` e `estornar_baixa` já aceitam conta a pagar desde 01/08. Falta construir:
+As duas decisões que travavam o início foram fechadas por Rogério:
 
-| Peça | Equivalente pronto em Receber |
-|---|---|
-| View de apoio com saldo, atraso e dias de atraso | `vw_contas_receber` |
-| Funções de criar, editar e excluir conta a pagar | `criar_receber` e `excluir_receber` |
-| Despacho das ações novas no `financeiro_operar` | Já existe, ganha branches |
-| Tela | Quase uma cópia da 5.6 |
+1. ~~Digitar todo mês ou gerar os doze de uma vez.~~ **Fechado**: informar a quantidade e gerar a série de uma vez. Foram aprovados os modos Repetição e Parcelamento, com periodicidade Mensal ou Semanal.
+2. ~~A Entrada de estoque deve perguntar o vencimento.~~ **Fechado**: sim, com geração opcional. A tela pergunta primeiro vencimento, quantidade e periodicidade somente quando Gerar conta a pagar estiver marcado.
 
-**Duas decisões suas travam o começo:**
+Foram construídos `vw_contas_pagar`, `criar_pagar`, `editar_pagar` e `excluir_pagar`; novas ações no `financeiro_operar` e no OLV2 Financeiro; integração com OLV2 Estoque; e a tela descrita na seção 5.7. A edição oferece o escopo atual ou atual e seguintes. A periodicidade semanal atende pagamentos como salários.
 
-1. **Conta que se repete todo mês** (aluguel, luz, internet). Cada mês vira um lançamento digitado à mão, ou o sistema gera os doze de uma vez? Isso muda a estrutura da tabela, então é decisão de banco, não de tela.
-2. **Entrada de estoque vira conta a pagar automaticamente?** A decisão 3 desta seção diz que **não é automática**, e que o vencimento é perguntado no lançamento. Falta ligar isso na tela de Estoque, que hoje não pergunta nada.
+A pendência 22 continua aberta e trava só o anexo, não a operação de Contas a Pagar.
 
-A pendência 22, do anexo de boleto, continua aberta e continua travando só a parte de anexo, não a tela inteira.
+#### Fluxo de Caixa concluído em 02/08/2026
 
-#### O que falta para Fluxo de Caixa *
+~~Dependia de Contas a Pagar e da pendência 24.~~ Os dois bloqueios foram resolvidos. `maquininhas` ganhou os prazos do débito e do crédito; Rede foi preenchida com 1 dia útil em ambos; a função `somar_dias_uteis` calcula a data do cartão; `fluxo_caixa_consultar` reúne realizado e previsto sem duplicar venda, cartão, recebível ou baixa; o OLV2 Financeiro ganhou a ação `fluxo_caixa`; e a tela está na seção 5.8.
 
-Depende de Contas a Pagar pronto, senão a tela mostra metade do dinheiro.
+**Correções após o primeiro teste.** Saída prevista deixou de ser confundida com saída realizada; os rótulos foram encurtados; os indicadores do topo passaram a acompanhar o período; e a validação de configuração deixou de exigir conta de destino para Crediário, Em aberto, Gratuidade e outros casos em que ela só existe na baixa ou não existe dinheiro.
 
-E existe um bloqueio concreto, registrado como **pendência 24 em 01/08/2026**: a tabela `maquininhas` não tem prazo de crédito. Este documento afirmava, na decisão "cartão não vira recebível", que o prazo estava cadastrado. Não está. Guarda nome, conta de destino e ativo, e nada mais. Sem a data, o sistema sabe quanto a operadora vai pagar mas não sabe quando, e projeção sem data não é projeção.
-
-**Ordem sugerida**: Contas a Pagar com as duas decisões acima respondidas, depois o prazo das maquininhas, e o Fluxo de Caixa por último.
+**O que permanece aberto.** A pendência 21, saldo e data inicial das contas, não impede a lista nem o resultado do período, mas impede considerar confiável o saldo final por conta. Feriados ainda não entram no cálculo de dias úteis porque não existe calendário de feriados no projeto.
 
 ### 9.5 Fase 2: Controle de caixa *
 
@@ -1436,8 +1493,8 @@ Separar duas coisas hoje misturadas:
 |---|---|---|
 | 1º | Login multiusuário | Concluído e no ar |
 | 2º | Base de dados no Supabase | **Concluído.** Esquema, produtos, clientes, endpoints e segurança fechados. Virada feita em 31/07/2026 |
-| 3º | **Fase 1: painel operacional novo** | **No ar como sistema único desde 31/07/2026**, em painel.olvdistribuidora.com.br. Pendência 17 e Estoque Inicial resolvidos em 01/08/2026. Falta publicar o painel v5 |
-| 4º | **Contas a pagar e receber** | **Contas a Receber concluída em 01/08/2026**, endpoint e tela no ar. Pendências 18 e 19 fechadas. **Contas a Pagar não começou**, e depende de duas decisões suas. Ver 9.4 |
+| 3º | **Fase 1: painel operacional novo** | **No ar como sistema único desde 31/07/2026**, em painel.olvdistribuidora.com.br. Upgrade visual concluído no arquivo v13 em 03/08/2026, aguardando publicação por Rogério |
+| 4º | **Contas a pagar, receber e Fluxo de Caixa** | **Concluídos e testados.** Contas a Receber em 01/08/2026; Contas a Pagar, pendência 24 e Fluxo de Caixa em 02/08/2026; Gás do Povo corrigido no mesmo dia. O anexo de boleto continua separado na pendência 22 |
 | 5º | Setores e permissões | **Deixou de bloquear o financeiro em 01/08/2026.** Continua pré-requisito da pendência 11 |
 | 6º | Controle de caixa | Fase 2 |
 | 7º | Módulo fiscal | Visão de futuro |
@@ -1452,11 +1509,17 @@ Separar duas coisas hoje misturadas:
 - ~~Pendência 18, tabela de baixas~~: criada, com status calculado por releitura. Seção 3.13.
 - ~~Pendência 19, `atualizar_venda` versus baixa~~: a função recusa pedido com baixa lançada.
 
+**Fechadas em 02/08/2026:**
+
+- ~~Repetição mensal digitada uma a uma~~: Rogério informa a quantidade e o sistema gera a série. Existem Repetição e Parcelamento.
+- ~~Periodicidade apenas mensal~~: Contas a Pagar aceita Mensal e Semanal.
+- ~~Entrada de estoque sem vencimento financeiro~~: a Entrada pergunta e gera a conta quando o administrador marcar a opção.
+- ~~Pendência 24, prazos das maquininhas~~: Rede em 1 dia útil para débito e crédito.
+- ~~Fluxo de Caixa bloqueado~~: função, ação no endpoint e tela concluídas.
+- ~~Gás do Povo ausente em Contas a Receber~~: cadastro corrigido e vendas anteriores reparadas sem duplicação.
+
 **Decisões a fechar:**
 
-- **Conta a pagar que se repete todo mês**: lançamento manual mês a mês, ou geração dos doze de uma vez. É decisão de banco. Trava o começo de Contas a Pagar.
-- **Entrada de estoque perguntando o vencimento**: a decisão 3 da 9.4 já diz que a geração não é automática, mas a tela de Estoque ainda não pergunta nada.
-- **Prazo de crédito das maquininhas (pendência 24)**: dois campos a criar e os prazos reais a preencher. Trava o Fluxo de Caixa.
 - **Anexo de boleto (pendência 22)**: por onde o arquivo sobe para o Storage, já que o navegador nunca fala direto com o Supabase. Trava a parte de anexo da tela de Contas a Pagar.
 - Setores: lista final, níveis internos e tratamento do histórico.
 - Pendência 11: quem atribui o entregador e como tratar Retirada e Aguardando.
@@ -1466,10 +1529,9 @@ Separar duas coisas hoje misturadas:
 
 **Ações do Rogério, fora de sessão:**
 
-- **Publicar o painel v7** no Cloudflare, que traz Contas a Receber, a correção do corte na tela de Vendas e a correção da data um dia antes.
-- Redefinir a senha da Gabriele e conferir o CORS da tela de Usuários no navegador.
-- Preencher conta de destino nas 8 formas e na maquininha (pendência 20).
-- Preencher saldo inicial e data inicial das 4 contas (pendência 21).
+- **Publicar o painel v13** no Cloudflare e conferir login, Dashboard, temas, pedidos, estoque, clientes e financeiro no endereço de produção.
+- Preencher conta de destino somente nas formas que movimentam dinheiro na hora e conferir a conta da maquininha, pendência 20.
+- Preencher saldo inicial e data inicial das 4 contas, pendência 21.
 
 ---
 
@@ -1481,22 +1543,23 @@ Separar duas coisas hoje misturadas:
 | URL do painel antigo | https://n8n-wmtt.srv1830312.hstgr.cloud/webhook/olv-painel. **Fora do ar desde 31/07/2026**, workflow desativado e guardado |
 | Autenticação | Login com papéis (administrador e colaborador), token de 12h |
 | Instância n8n | n8n-wmtt.srv1830312.hstgr.cloud |
-| Workflows de dados, ativos | OLV2 Dados, OLV2 Pedido, OLV2 Estoque, OLV2 Clientes, ativos desde 30/07/2026; OLV2 Cadastros, ativo desde 31/07/2026; OLV2 Financeiro, ativo desde 01/08/2026 |
+| Workflows de dados, ativos | OLV2 Dados, OLV2 Pedido, OLV2 Estoque, OLV2 Clientes, ativos desde 30/07/2026; OLV2 Cadastros, ativo desde 31/07/2026; OLV2 Financeiro, ativo desde 01/08/2026 e ampliado em 02/08/2026 |
 | Workflows de acesso, ativos | OLV Login `W4qgfRIna8BIRUVz`, OLV Contas `UBMRIgBy2jcBESBw`. Camada compartilhada, não saem na virada. Seção 4.1 |
 | Workflows desativados na virada | OLV Painel Mobile `WAiagumIwB8viELn`; OLV Vendas `9Fx0Y4zvPq7PcHKK`; OLV Estoque `fgmMA5a6hiEZr9z2`. **Desativados, não excluídos.** Ponto de retorno |
 | Tabelas internas do n8n | OLV Usuarios `T0MSOwzSF6VH4ngX` e OLV Painel HTML |
 | Pontos de restauração (v1.4) | Painel 63bf15bb; Vendas 348ed17a; Estoque 2adfcba0 |
 | Identificadores dos workflows novos | Dados fi2DPaA6qL7MxwIV; Pedido aPr6vx4oesVfkLis; Estoque 3l15lOfGCeYqLEu7; Clientes ClsDIM8jVRB5fijC (v3.1); Cadastros fV9fzAM81cT2Pvma (31/07/2026); Financeiro q4Bbzx7BSn6EiwjQ (01/08/2026) |
-| Banco de dados | Supabase PostgreSQL 17, projeto olv-distribuidora_sistema, região São Paulo. 9 tabelas de movimento (com `baixas`, de 01/08/2026), 6 de cadastro, 3 views, RLS ativa. **Papéis públicos sem acesso ao schema `public` desde 31/07/2026** |
+| Banco de dados | Supabase PostgreSQL 17, projeto olv-distribuidora_sistema, região São Paulo. 9 tabelas de movimento, 6 de cadastro, 4 views de apoio, RLS ativa. **Papéis públicos sem acesso ao schema `public` desde 31/07/2026** |
 | Rotina de fechamento de acesso | `fechar_acesso_publico()` e `auditar_acesso_publico()`, criadas em 01/08/2026. Rodar depois de **toda** migração. Seção 8.6 |
 | Funções de gravação de pedido | `registrar_venda` (criar) e `atualizar_venda` (editar por completo). As duas numa transação só, as duas capturando a taxa do cartão. A `atualizar_venda` recusa pedido com baixa lançada, desde 01/08/2026 |
-| Funções do financeiro | `financeiro_operar` (despachante), `registrar_baixa`, `estornar_baixa`, `criar_receber` e `excluir_receber`. Todas exclusivas do administrador, com trava positiva por dentro. Criadas em 01/08/2026 |
+| Funções do financeiro | `financeiro_operar`, `registrar_baixa`, `estornar_baixa`, `criar_receber`, `excluir_receber`, `criar_pagar`, `editar_pagar`, `excluir_pagar`, `somar_dias_uteis` e `fluxo_caixa_consultar`. As operações financeiras são exclusivas do administrador, com trava positiva no endpoint e no banco |
 | Cadastros do financeiro | `contas`, `maquininhas`, `bandeiras`, `taxas_cartao`, `formas_pagamento`, `categorias_conta_pagar`. Criados em 31/07/2026, com workflow (OLV2 Cadastros) e tela publicados no mesmo dia. Seções 3.12, 4.3 e 5.4 |
-| Maquininha e taxas | Rede. Padrão (Mastercard e Visa) e Outras (Elo). Débito 0,69 e 1,49; crédito à vista 2,71 e 3,51; 2x 3,78 e 4,58; 3x 4,35 e 5,15. Tudo em 1 dia útil. Pix sem taxa |
+| Maquininha e taxas | Rede. Padrão (Mastercard e Visa) e Outras (Elo). Débito 0,69 e 1,49; crédito à vista 2,71 e 3,51; 2x 3,78 e 4,58; 3x 4,35 e 5,15. `prazo_debito_dias` e `prazo_credito_dias` em 1 dia útil. Pix sem taxa |
 | Conexão n8n para Supabase | Session Pooler IPv4, host aws-0-sa-east-1.pooler.supabase.com, porta 5432, base postgres, usuário postgres.ggvfrnympdrqyqxgcyex, SSL ativo. Credencial "Supabase OLV" |
 | Domínio | olvdistribuidora.com.br no Registro.br. painel.olvdistribuidora.com.br configurado no Cloudflare e no ar desde 30/07/2026 |
 | Fonte de clientes | Google Contatos, 910 importados |
-| Cores do painel | Mantidos os valores de trabalho originais: azul-marinho #0b2545, azul-médio #1d6fd6, verde #1c9c5b, amarelo #e3a92b, vermelho #c0392b. Testada e descartada a troca pelas cores da logo (31/07/2026) |
+| Painel HTML atual | **Painel OLV Distribuidora - v13.html**, implementado e verificado em 03/08/2026. Aguarda publicação no Cloudflare e teste final por Rogério |
+| Cores do painel | Upgrade visual v13 aprovado em 03/08/2026. Usa azuis, verde e branco da identidade comercial da OLV, amarelo para destaque e vermelho para alerta, com temas claro e escuro |
 | Favicon / ícone de app | Embutido no HTML como data URI: favicon 16/32px, apple-touch-icon 180px, ícone de manifest 192px, cantos com transparência real |
 | Documento oficial | GitHub rogeriosandre/olv-distribuidora, Painel_OLV_Documentacao_e_Evolucao.md |
 | Documento visual | Painel_OLV_Visual.md, no mesmo repositório |
@@ -1508,10 +1571,10 @@ Separar duas coisas hoje misturadas:
 | POST /webhook/olv2-dados | `{acao, token, de, ate}` |
 | POST /webhook/olv2-pedido | `{acao, token, venda, itens, pagamentos, idempotency_key}` ou `{acao, token, venda_id, ...}`. Ações: `criar`, `editar`, `status`, `editar_leve`, `excluir` |
 | POST /webhook/olv-contas | `{action, token, usuario, senha, papel, ativo}`. Ações: `listar`, `criar`, `papel`, `ativo`, `trocar_senha`, `resetar_senha`. **Usa `action`, não `acao`**, por ser anterior aos endpoints OLV2 |
-| POST /webhook/olv2-estoque | `{acao, token, tipo, produto_id, quantidade, custo_unitario, fornecedor}` |
+| POST /webhook/olv2-estoque | `{acao, token, tipo, produto_id, quantidade, custo_unitario, fornecedor}`. Na Entrada, pode incluir `{gerar_conta_pagar, vencimento, parcela_total, periodicidade}` |
 | POST /webhook/olv2-clientes | `{acao, token, nome, endereco, bairro, telefone}` ou `{acao, token, termo}` |
 | POST /webhook/olv2-cadastros | `{acao, token, tabela, ...campos da tabela}` |
-| POST /webhook/olv2-financeiro | `{acao, token, status, de, ate, termo}` para listar; `{acao, token, descricao, valor, vencimento, cliente_id}` para criar; `{acao, token, conta_receber_id, valor, data, forma, conta_id, observacao}` para baixar; `{acao, token, baixa_id}` para estornar. Ações: `listar`, `criar`, `excluir`, `baixar`, `estornar` |
+| POST /webhook/olv2-financeiro | Receber: `listar`, `criar`, `excluir`. Pagar: `listar_pagar`, `criar_pagar`, `editar_pagar`, `excluir_pagar`. Movimento: `baixar`, `estornar`, `fluxo_caixa`. Filtros usam `{status, de, ate, termo}`; baixa usa um de `{conta_receber_id, conta_pagar_id}`, mais `{valor, data, forma, conta_id, observacao}` |
 
 Toda resposta traz `ok` verdadeiro ou falso. Quando falso, traz `erro` com mensagem pronta para exibir ao usuário.
 
@@ -1610,3 +1673,4 @@ Primeira linha da resposta: **Modelo indicado: [X]. Motivo: [tipo de tarefa].** 
 | 31/07/2026 | 3.8 | **Sessão Sonnet 5: quatro tarefas do painel, três bugs de produção pré-existentes corrigidos, ajustes de uso.** (a) **Pendência 13 encerrada por completo**: o endpoint OLV2 Estoque ganhou a ação `excluir`, restrita ao administrador, com botão e confirmação em duas etapas no painel; a saída automática de venda concluída nunca mostra o botão, por ser calculada, não gravada. Seções 3.11, 7 e 9.2. (b) A coluna `vendas.acrescimo`, criada na v3.6 mas ainda sem uso no formulário, foi ligada à tela: seletor único de Desconto ou Acréscimo, nunca os dois ao mesmo tempo, validado também no servidor. Seção 9.2. (c) O campo de valor unitário do pedido passou a ser preenchido com `produtos.preco_venda` ao escolher o produto, continuando editável e negociável item a item. Seção 9.2. (d) **Construído e publicado o workflow OLV2 Cadastros** (`fV9fzAM81cT2Pvma`), antecipando parte da etapa 9.7 a pedido de Rogério: cobre as sete tabelas de cadastro do financeiro, com tela exclusiva do administrador e o mesmo bloco de entrada dos outros quatro endpoints. Seções 3.12, 4.2 e 5.4. (e) **Três bugs de produção encontrados e corrigidos**, sem relação com as quatro tarefas acima: a publicação dos quatro workflows OLV2 estava atrasada em relação ao painel já no ar, causando divergência entre o acréscimo enviado pelo painel e o que o backend antigo esperava, corrigida publicando os quatro; o `queryReplacement` do nó Postgres do n8n corta valor por vírgula e descarta parâmetro que resolve para string vazia, quebrando `Consultar Itens T` e `Consultar Itens P` do OLV2 Dados (lista de pedidos do período) e `Consultar Histórico` do OLV2 Estoque (filtro Tipo em branco); documentado como armadilha nova na seção 8.5, corrigido nos três nós e publicado. (f) **Ajustes de uso**: todas as telas com filtro de período passaram a carregar sozinhas ao abrir, sem precisar clicar em Buscar; Estoque ganhou painel de "Movimentações de hoje" na aba Produtos e passou a mostrar 7 dias por padrão na aba Histórico, com indicador colorido (verde para entrada, vermelho para saída) e datas sem horário; campo de data retroativa no formulário de pedido, corrigindo bug em que a data enviada ao servidor era sempre a de hoje; valor do pagamento preenchido automaticamente quando há uma única linha; cards de pedido mostrando só a data; coluna Endereço adicionada à tabela de Clientes. Seções 9.1 e 9.2. (g) Todos os dados de teste gerados na sessão, incluindo os do próprio Rogério durante a validação em produção, removidos do banco ao final, conferido por SQL. |
 | 01/08/2026 | 3.9 | **Sessão Opus 5: religação da `registrar_venda`, edição completa de pedido, pendência 17 resolvida e primeiro dia de operação real.** (a) **Decisão da seção 9.4 fechada: guardar as duas margens.** As duas opções do documento fechavam uma porta cada; a terceira saída faz a `vw_pedidos` calcular margem bruta e líquida ao mesmo tempo, deixando a escolha de qual mostrar como decisão de tela, reversível. `pagamentos` ganhou oito colunas de cartão, com `valor` continuando cheio pela trava adiada. (b) **`registrar_venda` religada** à tabela `formas_pagamento`, com conferência prévia campo a campo provando que o comportamento não mudou, e com captura da taxa do cartão. Nunca bloqueia a venda por taxa ausente: grava sem taxa e devolve aviso. (c) **Interruptor de bandeira "Outras"** na tela de venda, com seletor de parcelas só no crédito. (d) **Função `atualizar_venda` criada**: edição completa de pedido, inclusive já concluído. A proposta original de criar uma situação "Finalizado" foi descartada, porque criaria uma janela em que o produto já saiu e o sistema ainda o conta no depósito; descobriu-se que os gatilhos de 31/07 já resolviam o recálculo, e faltava só a função. Custo dos itens preserva o original e carimba o de hoje só nos produtos novos. (e) **Pendência 17 resolvida em três frentes indissociáveis**: CORS no OLV Contas, ação `resetar_senha` para o administrador, e troca de senha obrigatória dentro do painel novo. O diagnóstico da v3.8 subestimava o problema: o login **bloqueava** quem tinha troca pendente e mandava usar o painel antigo, desativado em 31/07, deixando a pessoa trancada fora do sistema. Aconteceu com a usuária Gabriele. (f) **Regra da seção 3.10 corrigida**: "objeto novo nasce fechado" está errado para funções. Tabela nasce fechada, **função nasce aberta**, testado três vezes, e `ALTER DEFAULT PRIVILEGES` não resolve. Criadas `fechar_acesso_publico()` e `auditar_acesso_publico()`, e a regra 9 das instruções. Nova seção 8.6. (g) **A regra de exclusão de cadastro não funcionava**: ela depende de o banco recusar o DELETE, e `formas_pagamento` e `categorias_conta_pagar` não são referenciadas por chave nenhuma, enquanto `taxas_cartao` apontava para maquininhas com CASCADE. Corrigido com RESTRICT e dois gatilhos. (h) **Erro de digitação corrigido no custo do Gás 13kg**: o Estoque Inicial foi lançado com quantidade 37 e custo 37,00, quando o real é 87,00, inflando o lucro do dia em R$ 200,00. Exigiu correção em duas frentes, porque o custo do item é congelado na venda. (i) **Faturamento passou a contar só pedido concluído**, mesmo critério do estoque, encerrando a divergência de dois critérios para o mesmo pedido. (j) **Cartão deixou de virar recebível** (pendência 9 redesenhada): o Fluxo de Caixa projeta direto de `pagamentos`. Gás do Povo continua virando. (k) **Financeiro antecipado**, deixando de esperar a etapa 9.7, pelo mesmo raciocínio que liberou os Cadastros em 31/07. (l) **Painel v5** com nove correções de uso pedidas no primeiro dia de operação, entre elas a perda de foco e de rolagem ao digitar, que eram um bug só. Cinco pendências novas registradas, 18 a 23, sendo duas de cadastro que dependem só do Rogério. |
 | 01/08/2026 | 4.0 | **Sessão Opus 5: Contas a Receber construída de ponta a ponta, mais dois bugs de produção corrigidos.** (a) **Pendência 18 fechada**: tabela `baixas` criada (seção 3.13), com as três travas e o status do pai calculado por releitura em vez de digitado, pelo mesmo raciocínio que resolveu o custo médio na pendência 13. Por isso a tela não tem botão de "marcar como recebido". (b) **Pendência 19 fechada**: a `atualizar_venda` passou a recusar pedido que já tenha baixa lançada, com mensagem pedindo o estorno antes. (c) **Endpoint OLV2 Financeiro construído e publicado** (`q4Bbzx7BSn6EiwjQ`), copiando nó a nó o padrão do OLV2 Cadastros, com duas travas de administrador em série e o `responsavel` da baixa vindo do token, nunca do navegador. Seção 4.4. (d) **Tela de Contas a Receber publicada** (seção 5.6), com quatro indicadores, filtros de situação, busca no servidor e histórico de baixas por linha. (e) **Lançamento manual criado a pedido do Rogério**: funções `criar_receber` e `excluir_receber`, com a trava de que só o que foi lançado à mão pode ser excluído, e só enquanto não tiver nenhuma baixa. Seção 3.8. (f) **Filtro de vencimento com horizonte**, atalhos de 30 dias, 3 meses e 12 meses, com o limite escrito na tela para nada sumir sem a pessoa perceber. (g) **Botão Atualizar removido**: a tela recarrega sozinha a cada visita, como as demais. (h) **Bug de layout corrigido na tela de Vendas**: as colunas do quadro tinham altura máxima calculada por chute (altura da janela menos 320 pixels), e em janela mais baixa o último cartão ficava cortado. Trocado por layout de altura real, com uma única área de rolagem. (i) **Bug de data corrigido, achado na conferência**: data pura era lida pelo navegador como meia-noite em Londres, e o vencimento aparecia um dia antes do que estava gravado. Pendência 25. (j) **Pendência 24 registrada**: a tabela `maquininhas` não tem prazo de crédito, ao contrário do que este documento afirmava. **Bloqueia o Fluxo de Caixa.** (k) Registrado na 9.4 o que falta para Contas a Pagar e para o Fluxo de Caixa, com as decisões que travam cada um. (l) `fechar_acesso_publico()` rodada depois de cada migração, com a auditoria devolvendo zero linhas.
+| 03/08/2026 | 5.0 | **Contas a Pagar, pendência 24, Fluxo de Caixa, correções de produção e upgrade visual.** (a) **Contas a Pagar concluída de ponta a ponta**: `contas_pagar` ganhou série, parcela, modo de geração, periodicidade e ligação com estoque; criadas `vw_contas_pagar`, `criar_pagar`, `editar_pagar` e `excluir_pagar`; OLV2 Financeiro ganhou `listar_pagar`, `criar_pagar`, `editar_pagar` e `excluir_pagar`; tela publicada e testada. (b) **Decisões de recorrência fechadas por Rogério**: quantidade gerada de uma vez, modos Repetição e Parcelamento, periodicidade Mensal e Semanal, e edição somente da atual ou da atual mais as seguintes. (c) **Entrada de estoque ligada ao financeiro**: geração de conta a pagar continua opcional e, quando marcada, pergunta primeiro vencimento, quantidade e periodicidade. (d) **Pendência 24 fechada**: `maquininhas` ganhou `prazo_debito_dias` e `prazo_credito_dias`; Rede preenchida com 1 dia útil em ambos. (e) **Fluxo de Caixa concluído**: criadas `somar_dias_uteis` e `fluxo_caixa_consultar`; OLV2 Financeiro ganhou `fluxo_caixa`; tela publicada e testada com realizados, previstos, entradas, saídas e busca. Corrigida a confusão entre compromisso futuro e dinheiro já movimentado. (f) **Regra de conta de destino corrigida**: Crediário, Em aberto e Gás do Povo escolhem a conta na baixa; Gratuidade não movimenta dinheiro; cartão usa a conta da maquininha; só formas que entram na hora exigem destino no cadastro. (g) **Resumos financeiros passaram a respeitar o intervalo** em Contas a Pagar e Contas a Receber. No Fluxo de Caixa, os cartões do topo acompanham o período e usam rótulos curtos. (h) **Gás do Povo corrigido**: passou a gerar recebível com vencimento em 3 dias úteis e conta escolhida na baixa; vendas anteriores sem recebível foram reparadas com proteção contra duplicidade. (i) **Painéis v8 a v12** acrescentaram abertura mensal, lista de Pedidos com filtros e totais, pesquisa durante a digitação, ajustes de dimensões e Fluxo de Caixa. (j) **Painel v13 implementado em 03/08/2026**, depois de simulações aprovadas: upgrade visual completo com identidade da OLV, temas claro e escuro, login redesenhado, menu dividido em Vendas, Pedidos, Estoque e Movimentações, Dashboard com Faturamento, Gastos, Lucro, Margem, comparação, gráfico com pontos, formas de pagamento, Atenção hoje e itens vendidos; Clientes ganhou compra no mês e histórico. O Fluxo de Caixa ficou sem gráfico por decisão de Rogério. (k) v13 verificado localmente com JavaScript válido, sem dependência externa e sem dados de teste; aguarda publicação no Cloudflare e teste final no endereço real. (l) Todas as migrações terminaram com `fechar_acesso_publico()` e auditoria pública em zero linhas, conforme a seção 8.6. |
