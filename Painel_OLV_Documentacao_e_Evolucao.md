@@ -3,7 +3,7 @@
 
 **Documentação do funcionamento e plano de evolução**
 
-Versão 5.1 · 07/08/2026
+Versão 5.2 · 08/08/2026
 Preparado para Rogério
 
 ---
@@ -24,6 +24,7 @@ Este documento é a fonte única de verdade do projeto. Quando você o mencionar
 10. **O sistema está em uso real desde 01/08/2026**, com pedidos, clientes e estoque de verdade. Antes de testar contra o banco, tire uma impressão digital dos dados existentes e confira no fim que nada mudou. Limpe todo dado de teste.
 11. **Identificador de workflow não é permanente (criada em 07/08/2026)**: publicar substituindo o workflow ativo por uma cópia gera um ID novo e aposenta o antigo. Antes de auditar um workflow pelo ID escrito aqui, confirme o nome, senão você audita uma cópia desativada achando que é produção. Motivo na seção 4.2.
 12. **Conferência contra o real (criada em 07/08/2026)**: quando a tarefa for atualizar este documento, leia a estrutura viva antes de escrever, não só o histórico. Tabelas, views e funções do Supabase, lista de workflows do n8n e data de atualização do Worker no Cloudflare. Foi assim que a v5.1 encontrou uma tabela, uma view, um endpoint, duas telas e dois identificadores que o documento não tinha.
+13. **O painel se audita pelo `ITENS_MENU`, não pelo corpo do HTML (criada em 08/08/2026)**: o arquivo do painel carrega, dentro do `<body>`, um retrato antigo da tela já desenhada. Quem ler o HTML sem executar JavaScript enxerga o painel como ele era naquele retrato, não como ele está. Para saber quais telas existem, leia a constante `ITENS_MENU` no script. Motivo na seção 8.7.
 
 ---
 
@@ -33,9 +34,11 @@ O projeto é um painel operacional da OLV Distribuidora que roda no navegador, c
 
 O objetivo é dar autonomia para lançar e consultar o dia a dia do negócio em um só lugar, com cálculos automáticos de lucro e de saldo de estoque, sem depender de aplicativo instalado.
 
-**Estado atual em 07/08/2026**, conferido contra o banco, o n8n e o Cloudflare nesta data: o painel novo é o sistema único desde a virada de 31/07/2026, acessível em https://painel.olvdistribuidora.com.br. Está em uso real, com **121 pedidos** lançados entre 01/08 e 07/08/2026, **936 clientes**, 17 movimentações de estoque, 34 recebimentos, 28 contas a pagar e 13 baixas. O acesso é individual, com papéis. Contas a Pagar, Contas a Receber, Fluxo de Caixa, **Contas** e **Resultados** estão no ar.
+**Estado atual em 08/08/2026**, conferido contra o banco, o n8n, o Cloudflare e o arquivo do painel nesta data: o painel novo é o sistema único desde a virada de 31/07/2026, acessível em https://painel.olvdistribuidora.com.br. Está em uso real, com **165 pedidos** lançados desde 01/08/2026, **949 clientes**, 18 movimentações de estoque, 44 contas a receber, 29 contas a pagar e 14 baixas. O acesso é individual, com papéis. Contas a Pagar, Contas a Receber, **Contas**, **Resultados** e **Cadastros** estão no ar. **Fluxo de Caixa está construído e funcionando, porém oculto no menu por decisão de Rogério desde 05/08/2026** (seção 5.8).
 
-**A publicação que estava pendente na v5.0 foi feita.** O Worker `painel-olv` no Cloudflare foi atualizado pela última vez em **07/08/2026**, e o endpoint mais novo (OLV2 Resultados) foi publicado no mesmo dia. O número da versão do arquivo HTML que está no ar **não é legível pelo lado do servidor** e fica pendente de confirmação por Rogério.
+**O módulo de Fornecedores entrou em 08/08/2026** e é a novidade desta versão: cadastro próprio, ligação por identificador em contas a pagar e em movimentações de estoque, e filtro por fornecedor no histórico do estoque. Detalhes nas seções 3.15, 4.3 e 5.4.
+
+**O Worker `painel-olv` no Cloudflare foi atualizado pela última vez em 08/08/2026, às 14h36 UTC**, depois das migrações do dia, que terminaram às 14h16. O arquivo no ar é o que contém o módulo de Fornecedores. O número da versão do HTML **não existe dentro do arquivo**: procurado linha a linha na conferência desta versão e não encontrado. Ver a proposta de marcador na seção 11.
 
 **Decisão de 25/07/2026**: o sistema é construído do zero sobre o Supabase (PostgreSQL). Não há migração de dados antigos: o sistema começa vazio e vai sendo preenchido pelo uso, com apenas clientes, produtos e usuários inseridos na abertura.
 
@@ -53,7 +56,7 @@ O painel funciona 24/7 mesmo com o computador desligado. As dependências são o
 
 **Regra de arquitetura (29/07/2026)**: **o navegador nunca fala direto com o Supabase.** Toda leitura e gravação passa pelo n8n, que é onde a permissão é validada. Ver seções 3.10 e 8.
 
-**Status em 07/08/2026**: conexão n8n para Supabase ativa e testada. Esquema do banco e **sete endpoints OLV2** em produção. Os três workflows antigos de dados estão desativados e guardados como pontos de retorno. OLV Login e OLV Contas continuam ativos porque são a camada de acesso compartilhada. O navegador não fala direto com o Supabase.
+**Status em 08/08/2026**: conexão n8n para Supabase ativa e testada. Esquema do banco e **sete endpoints OLV2** em produção, quatro deles republicados em 08/08/2026 para o módulo de Fornecedores. Os três workflows antigos de dados estão desativados e guardados como pontos de retorno. OLV Login e OLV Contas continuam ativos porque são a camada de acesso compartilhada. O navegador não fala direto com o Supabase.
 
 ### 2.1 Camada de login e usuários
 
@@ -71,9 +74,9 @@ O painel funciona 24/7 mesmo com o computador desligado. As dependências são o
 
 ## 3. ESTRUTURA DE DADOS (SUPABASE)
 
-Cada assunto vive em uma tabela própria, ligada às outras por um código (ID). **Dez tabelas de movimento, seis de cadastro e cinco views de apoio**, conferidos no banco em 07/08/2026. Tranca de segurança (RLS) ativa em todas as tabelas.
+Cada assunto vive em uma tabela própria, ligada às outras por um código (ID). **Dez tabelas de movimento, sete de cadastro e cinco views de apoio**, ou seja **17 tabelas ao todo**, conferidos no banco em 08/08/2026. Tranca de segurança (RLS) ativa em todas as 17, nenhuma com política, que é o desenho pretendido e está explicado na seção 3.10.
 
-As dez de movimento guardam o que acontece: clientes, produtos, vendas, venda_itens, pagamentos, estoque_movimentacoes, contas_pagar, contas_receber, baixas e **contas_ajustes**, esta última criada em 03/08/2026 e detalhada na seção 3.14. As seis de cadastro, criadas em 31/07/2026, guardam as regras e os parâmetros do negócio, e estão na seção 3.12.
+As dez de movimento guardam o que acontece: clientes, produtos, vendas, venda_itens, pagamentos, estoque_movimentacoes, contas_pagar, contas_receber, baixas e **contas_ajustes**, esta última criada em 03/08/2026 e detalhada na seção 3.14. As sete de cadastro guardam as regras e os parâmetros do negócio: seis criadas em 31/07/2026, na seção 3.12, mais **`fornecedores`**, criada em 08/08/2026 e detalhada na seção 3.15.
 
 **Reestruturação de 30/07/2026**: a venda deixou de ser uma linha por produto e passou a ser um **pedido com vários itens**. Motivo na seção 3.4.
 
@@ -245,7 +248,8 @@ A correção de 02/08/2026 havia reparado as vendas de Gás do Povo que tinham f
 | custo_unitario | Número | Informado na Entrada e no Estoque Inicial. **O banco recusa se vier num Ajuste** (31/07/2026) |
 | quantidade | Número | Obrigatório |
 | data | Data | Começa com hoje |
-| fornecedor | Texto | Opcional. Serve depois para ligar com contas a pagar |
+| fornecedor | Texto | Opcional. **Nome copiado no momento do lançamento.** Continua sendo gravado ao lado do `fornecedor_id`, ver pendência 29 |
+| fornecedor_id | Ligação | **Criado em 08/08/2026.** Aponta para `fornecedores`. É o campo que o filtro do histórico usa. Seção 3.15 |
 | responsavel, observacao | Texto | Opcionais |
 
 ### 3.7 contas_pagar
@@ -253,7 +257,8 @@ A correção de 02/08/2026 havia reparado as vendas de Gás do Povo que tinham f
 | Campo | Tipo | Regra |
 |-------|------|-------|
 | id | ID | Chave |
-| fornecedor, descricao, categoria | Texto | Opcionais |
+| fornecedor, descricao, categoria | Texto | Opcionais. `fornecedor` é o **nome copiado** no momento do lançamento, ver pendência 29 |
+| fornecedor_id | Ligação | **Criado em 08/08/2026.** Aponta para `fornecedores`, **sem cascata**: fornecedor com conta ligada não pode ser apagado. Seção 3.15 |
 | valor | Número | Obrigatório |
 | vencimento, pago_em | Data | Opcionais |
 | status | Texto | **Validado**: Em aberto ou Pago |
@@ -269,6 +274,8 @@ A correção de 02/08/2026 havia reparado as vendas de Gás do Povo que tinham f
 **Periodicidade.** A série pode ser Mensal ou Semanal. Na mensal, o sistema preserva o dia do primeiro vencimento e usa o último dia quando o mês for mais curto. Na semanal, soma 7 dias por ocorrência. Ao editar uma série, Rogério escolhe entre somente a conta atual e a atual mais as seguintes. Conta com baixa não pode ser editada nem excluída sem estornar antes.
 
 **Ligação com o estoque.** Na Entrada, gerar a conta a pagar é opcional. Quando marcado, fornecedor, quantidade e custo vêm da movimentação, a descrição é montada com o produto, a categoria é Mercadoria e o valor nasce de quantidade vezes custo unitário. Uma mesma Entrada não pode gerar duas contas a pagar.
+
+**Fornecedor virou cadastro em 08/08/2026** (migrações `criar_pagar_com_fornecedor_id` e `editar_pagar_com_fornecedor_id`). As duas funções passaram a receber `fornecedor_id` junto com o nome, e a `vw_contas_pagar` passou a devolver a coluna. O campo da tela virou uma caixa com lista de sugestões: escolher um fornecedor já cadastrado preenche o identificador, e digitar um nome novo cadastra o fornecedor sozinho antes de salvar a conta. Ver 3.15 e 5.4.
 
 ### 3.8 contas_receber
 
@@ -336,6 +343,31 @@ Movimentos de conta que **não nasceram de venda, de baixa ou de conta a pagar**
 
 **Estado em 07/08/2026**: a tabela existe e está vazia, zero lançamentos. Três das quatro contas já têm `saldo_inicial` e `data_inicial` preenchidos, o que é a pendência 21 quase fechada. Ver seção 3.11.
 
+### 3.15 fornecedores (criada em 08/08/2026)
+
+Até aqui, fornecedor era só um texto digitado a cada lançamento. Cada Entrada de estoque e cada conta a pagar guardava o nome escrito na hora, então "Ultragaz", "ultragaz" e "Ultra Gaz" eram três fornecedores diferentes para o sistema, e não havia como somar o que foi comprado de cada um.
+
+A tabela resolve isso. É o mesmo movimento que já tinha sido feito com clientes e produtos: o que se repete vira cadastro, e o lançamento passa a apontar para ele.
+
+| Campo | Tipo | Regra |
+|-------|------|-------|
+| id | ID | Chave |
+| nome | Texto | **Obrigatório e único no banco.** Não existem dois fornecedores com o mesmo nome |
+| telefone | Texto | Opcional |
+| observacao | Texto | Opcional |
+| ativo | Sim/Não | Começa em Sim |
+| criado_em | Data e hora | Preenchida pelo banco |
+
+**Seis fornecedores cadastrados em 08/08/2026.**
+
+**Quem aponta para cá**: `contas_pagar.fornecedor_id` e `estoque_movimentacoes.fornecedor_id`, as duas ligações **sem cascata**. Apagar um fornecedor que já tem lançamento é recusado pelo banco, pelo mesmo motivo que protege cliente e produto: o histórico não pode sumir por um clique no cadastro.
+
+**Cadastro na hora, sem sair da tela.** Nas duas telas que pedem fornecedor, o campo mostra a lista dos já cadastrados e aceita um nome novo. Quando o nome digitado não existe, o painel cria o fornecedor antes de gravar o lançamento, e só então grava. É o que evita a tela pedir que a pessoa pare o que está fazendo, vá até Cadastros, crie o fornecedor e volte.
+
+**Auditoria de permissão desta criação automática, conforme a regra 8.** A criação chama o endpoint `olv2-cadastros`, que é **exclusivo do administrador**. Se um colaborador conseguisse chegar até ali, o lançamento falharia com "Cadastros são exclusivos do administrador". **Não chega**: o campo Fornecedor só aparece quando o lançamento exige custo, ou seja Entrada e Estoque Inicial, e esses dois tipos já são exclusivos do administrador desde 30/07/2026 (seção 7). O colaborador só lança Ajuste, que não mostra o campo. Na tela de Contas a Pagar, a própria tela é exclusiva do administrador. Conferido no arquivo do painel em 08/08/2026, caminho por caminho.
+
+**O nome continua sendo gravado junto com a ligação**, nas duas tabelas. É a pendência 29.
+
 ### 3.9 Como as tabelas se ligam, e as views
 
 ```
@@ -344,6 +376,8 @@ clientes ──→ vendas (pedido) ──┬──→ venda_itens ──→ prod
 
 produtos ──→ estoque_movimentacoes
 estoque_movimentacoes ──→ contas_pagar ──→ baixas
+fornecedores ──→ estoque_movimentacoes
+fornecedores ──→ contas_pagar
 
 contas ──→ contas_ajustes
 contas ──→ baixas (conta de destino)
@@ -482,14 +516,16 @@ O que fica: se algum dia for preciso abrir algo para a API REST, a abertura é e
 | 18 | ~~Tabela de baixas não existe~~ | **Resolvida em 01/08/2026**: tabela `baixas` criada, com status do pai calculado por releitura. Seção 3.13 |
 | 19 | ~~`atualizar_venda` versus baixa parcial~~ | **Resolvida em 01/08/2026**: a função recusa pedido que já tenha baixa lançada, com mensagem explicando que é preciso estornar antes |
 | 20 | ~~Conta de destino não preenchida~~ | **Resolvida, conferida no banco em 07/08/2026**: Dinheiro e Gás do Povo apontam para o Caixa da Loja; Pix, Débito e Crédito apontam para o Banco Itaú. Crediário, Em aberto e Gratuidade seguem vazios, que é o correto, porque a conta é escolhida na baixa ou não existe dinheiro |
-| 21 | **Saldo inicial das contas, quase fechada** | Conferido em 07/08/2026: Itaú (R$ 1.061,21), Sicredi (R$ 1.879,15) e Banco Digital (R$ 0,00) já têm `data_inicial` em 02/08/2026. **Falta o Caixa da Loja**, que segue com saldo 0,00 e `data_inicial` vazia. Enquanto isso, a conciliação da seção 3.14 **recusa** essa conta, porque sem data inicial não há saldo calculável. É a única conta física e a que mais recebe dinheiro na hora |
+| 21 | **Saldo inicial do Caixa da Loja, e o susto que ele vai causar** | Reconferido no banco em 08/08/2026, sem mudança: Itaú (R$ 1.061,21), Sicredi (R$ 1.879,15) e Banco Digital (R$ 0,00) têm `data_inicial` em 02/08/2026. **O Caixa da Loja segue com saldo 0,00 e `data_inicial` vazia.** Enquanto isso, a conciliação da seção 3.14 **recusa** essa conta, porque sem data inicial não há de onde partir a conta do saldo. É a única conta física e a que mais recebe dinheiro na hora. **Reforçado em 08/08/2026, ao encerrar a pendência 28**: o financeiro ainda não fez nenhum lançamento de ajuste, então a primeira tentativa dele muito provavelmente vai ser justamente no Caixa da Loja, e vai ser recusada. A leitura natural de quem receber essa recusa é "a tela não funciona", quando o que falta é um cadastro de dois campos que só depende de Rogério. **É o item de maior risco de virar desconfiança na ferramenta, e o mais barato de resolver** |
 | 22 | **Anexo de boleto sem caminho** | Zero buckets no Storage, e a regra da seção 2 diz que o navegador nunca fala direto com o Supabase. Falta decidir por onde o arquivo sobe: n8n recebe e grava, ou exceção só para Storage. **Trava somente o anexo**, não a tela de Contas a Pagar |
 | 23 | **Código morto no painel** | O formulário de edição leve deixou de ser usado quando a edição completa entrou em 01/08/2026. Remover numa próxima passada |
 | 24 | ~~Maquininha não tem prazo de crédito~~ | **Resolvida em 02/08/2026**: criados `prazo_debito_dias` e `prazo_credito_dias`, ambos obrigatórios e não negativos. Rede preenchida com 1 dia útil para débito e crédito, inclusive parcelado. Desbloqueou o Fluxo de Caixa |
 | 25 | ~~Data aparecia um dia antes na tela~~ | **Resolvida em 01/08/2026**: data pura (AAAA-MM-DD) era lida pelo navegador como meia-noite em Londres, que no Brasil ainda é o dia anterior. O vencimento 03/08 aparecia como 02/08. Corrigido no formatador, que ancora ao meio-dia local. Data com hora, como a dos pedidos, nunca foi afetada |
 | 26 | **Gás do Povo virou cartão e perdeu o lugar do atraso** | **Aberta em 07/08/2026, na conferência desta versão.** Desde 05/08 o Gás do Povo não gera mais recebível, é projetado como cartão em 3 dias úteis. Se o repasse do programa atrasar ou vier diferente, não existe recebível para baixar parcialmente e a diferença não tem onde ser registrada. Era esse o argumento que justificou o desenho anterior, em 02/08. **Decisão de Rogério.** Ver seção 3.5 |
 | 27 | **Duas colunas chamadas `lucro` com sentidos diferentes** | **Aberta em 07/08/2026.** Na `vw_pedidos`, `lucro` é **bruto**, sem a taxa do cartão, por decisão da 9.4. Na `vw_resultados`, `lucro` **já desconta** a taxa. Os dois estão certos dentro da própria view, e vão divergir quando comparados lado a lado no Dashboard e na tela Resultados. Renomear na `vw_resultados` para `lucro_liquido` é a saída, e é mudança de nome de coluna, não de regra. Ver seção 3.9 |
-| 28 | **`contas_ajustes` existe e não tem uso** | Zero lançamentos em 07/08/2026. Ou a conferência de saldo ainda não entrou na rotina, ou a tela não está sendo encontrada. Vale confirmar com Rogério antes de considerar a seção Contas concluída |
+| 28 | ~~`contas_ajustes` existe e não tem uso~~ | **Esclarecida em 08/08/2026 por Rogério.** Das duas hipóteses levantadas em 07/08, cai a técnica: a tela de Contas está no ar, é encontrada e funciona. **O que falta é o financeiro fazer os lançamentos de ajuste**, que ainda não entraram na rotina. Não é defeito, é adoção, então sai da lista de pendências. O que sobra de risco está na pendência 21, e é o cadastro do Caixa da Loja |
+| 29 | **Duas colunas guardam o mesmo fornecedor** | **Aberta em 08/08/2026, decidida como pendência por Rogério.** `contas_pagar` e `estoque_movimentacoes` têm `fornecedor` (texto) e `fornecedor_id` (ligação), e o painel grava as duas. Renomear um fornecedor no cadastro **não** atualiza o texto já gravado, então os lançamentos antigos passam a mostrar um nome e apontar para outro. Hoje ninguém percebe porque nenhum fornecedor foi renomeado. Duas saídas possíveis: assumir o texto como histórico congelado de propósito, como já é o custo do item na venda, ou parar de gravar o texto e ler sempre pela ligação. **Falta decidir qual.** Ver 3.15 |
+| 30 | **O arquivo do painel não tem número de versão** | **Aberta em 08/08/2026.** A v5.1 registrou que a versão do HTML no ar não era legível pelo servidor. A conferência desta versão achou a causa: o número **não existe dentro do arquivo**, em nenhum comentário, constante ou rodapé. Enquanto for assim, ninguém consegue provar qual arquivo está publicado, nem o servidor nem uma pessoa olhando a tela. Proposta na seção 11 |
 
 A numeração 11, 12, 16 e 17 fica na seção 8.3, porque são pendências de segurança e de acesso. A série é única.
 
@@ -529,7 +565,9 @@ Criados a pedido do Rogério, para que os parâmetros do negócio sejam **visív
 | `formas_pagamento` | As formas e o **comportamento** de cada uma | 8 formas espelhando o comportamento atual |
 | `categorias_conta_pagar` | Categorias de despesa | Mercadoria, Combustível, Veículo, Salários, Impostos, Aluguel, Utilidades, Outros |
 
-**Colunas acrescentadas a `formas_pagamento` depois da criação**, conferidas no banco em 07/08/2026:
+**A sétima tabela de cadastro, `fornecedores`, entrou em 08/08/2026** e tem seção própria, a 3.15, porque não nasceu com as outras seis e a regra de exclusão dela é diferente.
+
+**Colunas acrescentadas a `formas_pagamento` depois da criação**, conferidas no banco em 08/08/2026:
 
 | Coluna | Para que serve |
 |---|---|
@@ -643,11 +681,24 @@ Prefixo OLV2 para não haver confusão com o conjunto anterior. **Ativados em 30
 | OLV2 Pedido (painel novo) | POST /webhook/olv2-pedido | `criar`, `editar`, `status`, `editar_leve`, `excluir` |
 | OLV2 Estoque (painel novo) | POST /webhook/olv2-estoque | `lancar`, `historico`, `excluir`. A Entrada pode chamar `criar_pagar` na mesma operação |
 | OLV2 Clientes (painel novo) | POST /webhook/olv2-clientes | `criar`, `editar`, `buscar` |
-| OLV2 Cadastros (painel novo, 31/07/2026) | POST /webhook/olv2-cadastros | `listar`, `criar`, `editar`, `excluir` (ou `desativar` quando já usado), por tabela |
+| OLV2 Cadastros (painel novo, 31/07/2026) | POST /webhook/olv2-cadastros | `listar`, `criar`, `editar`, `excluir` (ou `desativar` quando já usado), por tabela. **Oito tabelas desde 08/08/2026** |
 | OLV2 Financeiro (painel novo, 01/08/2026) | POST /webhook/olv2-financeiro | Receber, Pagar, baixas, estornos, `fluxo_caixa` e, desde 03/08/2026, a seção Contas. Detalhados na seção 4.4 |
 | OLV2 Resultados (painel novo, 05/08/2026) | POST /webhook/olv2-resultados | `resultados`. Exclusivo do administrador. Detalhado na seção 4.5 |
 
-**Auditoria da instância em 07/08/2026**: **20 workflows**, sendo 7 de dados OLV2 ativos, 2 de acesso ativos, 3 antigos desativados como ponto de retorno, 3 cópias de backup desativadas e 5 de outros assuntos. A instância continua com uma única credencial de Supabase, do tipo Postgres.
+**Auditoria da instância em 08/08/2026**: **20 workflows**, sendo 7 de dados OLV2 ativos, 2 de acesso ativos, 3 antigos desativados como ponto de retorno, 3 cópias de backup desativadas e 5 de outros assuntos. Nenhum workflow foi criado nem excluído desde a v5.1. A instância continua com uma única credencial de Supabase, do tipo Postgres.
+
+**Publicação de 08/08/2026, módulo de Fornecedores.** Quatro workflows republicados na mesma janela:
+
+| Workflow | Horário (UTC) | O que mudou |
+|---|---|---|
+| OLV2 Cadastros | 14h05 | Passou a aceitar a tabela `fornecedores`. A lista de tabelas válidas do nó `Prep Cadastro` foi de sete para oito |
+| OLV2 Estoque | 14h06 | A Entrada passou a repassar `fornecedor_id` junto com o nome |
+| OLV2 Financeiro | 14h07 | `criar_pagar` e `editar_pagar` passaram a repassar `fornecedor_id`; `listar_pagar` passou a devolver a lista de fornecedores para preencher a caixa de sugestões |
+| OLV2 Clientes | 14h12 | Republicado na mesma janela |
+
+**Desta vez os identificadores não mudaram**, e isso corrige a leitura que a v5.1 poderia induzir. A regra da seção 4.2 não é "publicar sempre troca o identificador": trocar acontece quando a publicação **substitui o workflow ativo por uma cópia nova**, que foi o caso do Estoque e do Financeiro em 02/08. Quando a publicação atualiza o workflow no lugar, como em 08/08, o identificador continua o mesmo. **A regra que fica é a mesma de antes, e por isso continua valendo**: confira o nome antes de auditar por identificador, porque você não sabe de que tipo foi a última publicação.
+
+**Divergência de rótulo registrada em 08/08/2026**: a descrição do próprio workflow OLV2 Cadastros, dentro do n8n, ainda lista sete tabelas e não cita fornecedores. O código já aceita oito. É rótulo desatualizado, não comportamento errado, e vale corrigir na próxima passada para não enganar quem for auditar pela descrição.
 
 **Identificadores mudaram e o documento estava desatualizado.** Publicar substituindo o workflow ativo por uma cópia nova cria um identificador novo e aposenta o antigo. Foi o que aconteceu com Estoque e Financeiro:
 
@@ -672,7 +723,7 @@ Prefixo OLV2 para não haver confusão com o conjunto anterior. **Ativados em 30
 
 ### 4.3 OLV2 Cadastros (construído em 31/07/2026)
 
-Workflow ID `fV9fzAM81cT2Pvma`. Cobre as sete tabelas de cadastro do financeiro (seção 3.12): `produtos` (edição do `preco_venda`), `contas`, `maquininhas`, `bandeiras`, `taxas_cartao`, `formas_pagamento` e `categorias_conta_pagar`.
+Workflow ID `fV9fzAM81cT2Pvma`. Cobre, desde 08/08/2026, **oito** tabelas de cadastro: `produtos` (edição do `preco_venda`), `contas`, `maquininhas`, `bandeiras`, `taxas_cartao`, `formas_pagamento`, `categorias_conta_pagar` e **`fornecedores`** (seções 3.12 e 3.15).
 
 Mesmo bloco de entrada dos outros quatro (Normalizar, Autenticar, Assinar, Autorizar, Autorizado?, Perfil, Rotear), mais um gate de administrador logo em seguida, porque a tela de Cadastros inteira é exclusiva dele, sem exceção por tabela.
 
@@ -704,7 +755,7 @@ Regra geral de exclusão, comum às sete tabelas: registro sem uso em nenhum lan
 
 ### 4.4 OLV2 Financeiro (construído em 01/08/2026)
 
-Identificador `q4Bbzx7BSn6EiwjQ`, endereço `POST /webhook/olv2-financeiro`. Mesmo bloco de entrada dos outros cinco endpoints, nó a nó: validação do token por SHA256, `allowedOrigins` restrito à origem do painel, e o erro devolvido como resposta em vez de falha de nó.
+Identificador **`ASx4FI8ZZEFcmv07`**, endereço `POST /webhook/olv2-financeiro`. (Até a v5.1 esta seção repetia o identificador antigo `q4Bbzx7BSn6EiwjQ`, que pertence a uma cópia desativada. Corrigido em 08/08/2026; a seção 4.2 já trazia o número certo.) Mesmo bloco de entrada dos outros cinco endpoints, nó a nó: validação do token por SHA256, `allowedOrigins` restrito à origem do painel, e o erro devolvido como resposta em vez de falha de nó.
 
 | Ação | O que faz |
 |---|---|
@@ -713,7 +764,7 @@ Identificador `q4Bbzx7BSn6EiwjQ`, endereço `POST /webhook/olv2-financeiro`. Mes
 | `excluir` | Apaga recebimento manual que ainda não teve nenhuma baixa |
 | `baixar` | Chama a `registrar_baixa` |
 | `estornar` | Chama a `estornar_baixa` |
-| `listar_pagar` | Devolve contas a pagar, baixas, resumo do período, contas ativas, categorias e formas aceitas |
+| `listar_pagar` | Devolve contas a pagar, baixas, resumo do período, contas ativas, categorias, formas aceitas e, **desde 08/08/2026, a lista de fornecedores** |
 | `criar_pagar` | Cria uma conta única, repetição ou parcelamento, mensal ou semanal |
 | `editar_pagar` | Edita somente a conta atual ou a atual e as seguintes |
 | `excluir_pagar` | Exclui somente a conta escolhida, desde que ela não tenha baixa |
@@ -764,6 +815,20 @@ Mesmo bloco de entrada dos outros seis endpoints, nó a nó: Normalizar, Autenti
 
 ## 5. O PAINEL (FUNCIONALIDADES ATUAIS)
 
+### 5.0 O menu de verdade (conferido em 08/08/2026)
+
+Este é o menu como ele existe hoje, lido na constante `ITENS_MENU` do arquivo do painel. Vale como índice das seções abaixo.
+
+| Grupo | Itens | Quem vê |
+|---|---|---|
+| Operação | Dashboard, Vendas, Pedidos, Estoque, Movimentações, Clientes | Dashboard só o administrador; os outros cinco, qualquer usuário ativo |
+| Financeiro | Contas, Contas a Pagar, Contas a Receber, Resultados | Só o administrador |
+| Administração | Usuários, Cadastros | Só o administrador |
+
+**Fluxo de Caixa não aparece nesta lista de propósito.** A tela existe inteira e continua funcionando; só o item do menu está escondido, por decisão de Rogério em 05/08/2026. Ver 5.8.
+
+**Não confie no corpo do HTML para responder esta pergunta.** O arquivo carrega um retrato antigo da tela já desenhada, e esse retrato mostra um menu de 31/07/2026 com metade dos itens marcados como "Em construção". Ele é substituído assim que a página abre. Motivo e detalhe na seção 8.7.
+
 ### 5.1 Vendas
 
 O menu separa **Vendas**, que é o quadro operacional por situação, e **Pedidos**, que é a lista para consulta. As duas entradas reutilizam os dados e as regras já existentes.
@@ -773,6 +838,10 @@ O menu separa **Vendas**, que é o quadro operacional por situação, e **Pedido
 ### 5.2 Estoque
 
 O menu separa **Estoque**, com o saldo atual por produto, e **Movimentações**, com o histórico. O lançamento aceita Entrada, Ajuste e Estoque Inicial. Na Entrada, o administrador pode marcar a geração de conta a pagar, informar primeiro vencimento, quantidade e periodicidade. O histórico permite editar e excluir conforme as regras de permissão. A busca reage durante a digitação e o filtro Todos foi redimensionado.
+
+**Campo Fornecedor com lista de sugestões, desde 08/08/2026.** Aparece na Entrada e no Estoque Inicial, que são os lançamentos que pedem custo e, por isso, os exclusivos do administrador. Escolher um fornecedor já cadastrado preenche a ligação; digitar um nome novo cadastra o fornecedor sozinho ao salvar. Ver 3.15.
+
+**Filtro por fornecedor em Movimentações, desde 08/08/2026.** O filtro é montado a partir dos fornecedores que aparecem nas movimentações já carregadas do período e recorta a lista no próprio navegador, sem nova consulta ao servidor. Só entram no filtro as movimentações que têm `fornecedor_id`: as anteriores a 08/08/2026 guardaram apenas o nome em texto e não aparecem nele.
 
 ### 5.3 Login, usuários e papéis
 
@@ -786,7 +855,9 @@ Agora quem tem troca pendente entra numa tela isolada, sem menu e sem dados carr
 
 ### 5.4 Cadastros (construído em 31/07/2026)
 
-Tela exclusiva do administrador. Cobre as sete tabelas de cadastro do financeiro: produtos (edição do preço de venda sugerido), contas, maquininhas, bandeiras, taxas de cartão, formas de pagamento e categorias de conta a pagar. Maquininhas mostram e editam os prazos do débito e do crédito em dias úteis.
+Tela exclusiva do administrador. Desde 08/08/2026 cobre **oito** abas: produtos (edição do preço de venda sugerido), contas, maquininhas, bandeiras, taxas de cartão, formas de pagamento, categorias de conta a pagar e **fornecedores**. Maquininhas mostram e editam os prazos do débito e do crédito em dias úteis.
+
+**Aba Fornecedores, acrescentada em 08/08/2026.** Nome (obrigatório e único), telefone, observação e ativo. É a oitava e última aba. A criação também acontece por fora desta tela, direto no lançamento de Contas a Pagar e na Entrada de estoque, quando a pessoa digita um nome que ainda não existe. Ver 3.15.
 
 Regra geral: registro sem uso é excluído de verdade; registro já usado em algum lançamento tem o botão trocado para Desativar. Custo do produto (`custo_atual`, `custo_ultima_compra`) nunca editável pela tela, só o preço de venda sugerido. Taxa de cartão nunca é sobrescrita, sempre sucede a vigência anterior. Criação de forma de pagamento nova bloqueada, porque a lista é fechada no banco (ver 3.12).
 
@@ -832,7 +903,13 @@ Tela exclusiva do administrador, ligada ao OLV2 Financeiro. Abre no mês atual e
 
 O campo de anexo ainda não existe. A pendência 22 trava apenas essa parte.
 
-### 5.8 Fluxo de Caixa (construído em 02/08/2026)
+### 5.8 Fluxo de Caixa (construído em 02/08/2026, oculto no menu desde 05/08/2026)
+
+**Oculto por decisão de Rogério em 05/08/2026, confirmada em 08/08/2026.** A tela **não foi removida**: a função que a desenha, a que carrega os dados, a rota de navegação e o filtro do topo continuam inteiros no arquivo. O que existe é uma marca `oculto: true` na linha do item dentro do `ITENS_MENU`, e o próprio código traz o comentário dizendo que reativar é apagar essa marca, nada mais. Enquanto isso, o Fluxo de Caixa não aparece no menu para ninguém, nem para o administrador.
+
+Até a v5.1 este documento afirmava que a tela estava no ar, o que estava errado desde 05/08. Corrigido aqui.
+
+O restante desta seção descreve a tela como ela funciona quando reativada.
 
 Tela exclusiva do administrador. Abre no mês atual e oferece Hoje, Ontem, 7 dias, Este mês, Mês anterior, Tudo e datas manuais. A lista pode mostrar Todos, Entradas, Saídas, Realizados ou Previstos, com busca durante a digitação.
 
@@ -868,7 +945,9 @@ Tela exclusiva do administrador, ligada ao OLV2 Financeiro. Mostra o saldo de ca
 
 **Duas recusas por desenho**: conta sem saldo e data inicial preenchidos não pode ser conciliada, e data anterior à data inicial é recusada. Hoje isso deixa o **Caixa da Loja de fora**, que é a pendência 21.
 
-**Estado em 07/08/2026**: a tela está no ar e a tabela `contas_ajustes` tem **zero lançamentos**. Ver pendência 28.
+**Estado em 08/08/2026**: a tela está no ar, é encontrada e funciona. A tabela `contas_ajustes` continua com **zero lançamentos** porque **o financeiro ainda não fez os ajustes**, confirmado por Rogério nesta data. Não há nada a corrigir na tela.
+
+**O que provavelmente acontece no primeiro uso.** O Caixa da Loja está sem saldo e data iniciais, e as duas recusas por desenho, acima, valem para ele. Quem tentar conciliar essa conta primeiro vai receber uma recusa e pode concluir que a tela está quebrada. Preencher os dois campos no cadastro de contas resolve. É a pendência 21.
 
 ### 5.11 Resultados (construída em 05/08/2026)
 
@@ -1239,7 +1318,21 @@ Existe um privilégio padrão do papel `supabase_admin` no schema `public` que *
 
 #### Aviso do auditor resolvido no mesmo dia
 
-`cadastro_operar` era a única função com `search_path` livre, único aviso de nível WARN do auditor do Supabase. Fixado em `public, pg_temp` sem tocar no corpo, porque a função usa nomes sem schema. Restam avisos informativos do tipo `rls_enabled_no_policy`, que são o desenho e não falha. Eram 8 na v3.5, passaram a 14 quando as 6 tabelas de cadastro entraram e estão em **16 em 07/08/2026**, com `baixas` e `contas_ajustes` somadas. **Nenhum aviso de nível WARN ou superior**, conferido nesta data. A auditoria `select * from auditar_acesso_publico() where anon or autenticado or publico;` devolveu **zero linhas**.
+`cadastro_operar` era a única função com `search_path` livre, único aviso de nível WARN do auditor do Supabase. Fixado em `public, pg_temp` sem tocar no corpo, porque a função usa nomes sem schema. Restam avisos informativos do tipo `rls_enabled_no_policy`, que são o desenho e não falha. Eram 8 na v3.5, passaram a 14 quando as 6 tabelas de cadastro entraram, 16 em 07/08/2026 e estão em **17 em 08/08/2026**, com a `fornecedores` somada. **Nenhum aviso de nível WARN ou superior**, conferido nesta data. A auditoria `select * from auditar_acesso_publico() where anon or autenticado or publico;` devolveu **zero linhas** depois das seis migrações do dia, conforme a regra 9.
+
+---
+
+### 8.7 O arquivo do painel mente sobre si mesmo para quem não roda JavaScript (achado em 08/08/2026)
+
+**Como apareceu.** Na conferência desta versão, a leitura do endereço do painel devolveu um menu com oito itens, três deles marcados como "Em construção", e sem Pedidos, Cadastros, Contas nem Resultados. Isso contradizia o documento inteiro. A conclusão fácil e errada seria: o arquivo publicado está atrasado.
+
+**O que era.** O arquivo do painel guarda, dentro do `<body>`, **um retrato de uma tela já desenhada**, congelado em 31/07/2026. Dá para datar sem margem de dúvida: o campo de data do Dashboard nesse retrato vem com o valor `2026-07-31` escrito. O menu de verdade não está nesse retrato. Ele é montado pelo script, a partir da constante `ITENS_MENU`, e substitui o retrato assim que a página abre.
+
+**Por que isso importa.** Qualquer leitura que não execute JavaScript enxerga o painel como ele era em 31/07: ferramenta de leitura de página, buscador, verificação automática, e a própria IA numa sessão de auditoria. É a mesma família de armadilha das seções 8.2 e 8.5: a informação está lá, disponível, e leva para a conclusão errada.
+
+**Regra que fica**, e que virou a regra 13 das instruções: para saber quais telas o painel tem, leia a constante `ITENS_MENU`. O corpo do HTML não responde essa pergunta.
+
+**Recomendação, não aplicada**: o retrato antigo não serve para nada em produção, já que é descartado no primeiro desenho da tela. Removê-lo deixaria o arquivo menor e acabaria com a armadilha de vez. Fica registrado como item a fazer, não como pendência numerada, porque não quebra nada hoje.
 
 ---
 
@@ -1713,27 +1806,29 @@ Separar duas coisas hoje misturadas:
 | URL do painel antigo | https://n8n-wmtt.srv1830312.hstgr.cloud/webhook/olv-painel. **Fora do ar desde 31/07/2026**, workflow desativado e guardado |
 | Autenticação | Login com papéis (administrador e colaborador), token de 12h |
 | Instância n8n | n8n-wmtt.srv1830312.hstgr.cloud |
-| Workflows de dados, ativos | **Sete**, conferidos em 07/08/2026: OLV2 Dados, OLV2 Pedido, OLV2 Estoque e OLV2 Clientes desde 30/07/2026; OLV2 Cadastros desde 31/07/2026; OLV2 Financeiro desde 01/08/2026, ampliado em 02, 03 e 07/08/2026; OLV2 Resultados desde 05/08/2026 |
+| Workflows de dados, ativos | **Sete**, conferidos em 08/08/2026: OLV2 Dados, OLV2 Pedido, OLV2 Estoque e OLV2 Clientes desde 30/07/2026; OLV2 Cadastros desde 31/07/2026; OLV2 Financeiro desde 01/08/2026, ampliado em 02, 03 e 07/08/2026; OLV2 Resultados desde 05/08/2026. **Cadastros, Estoque, Financeiro e Clientes republicados em 08/08/2026** para o módulo de Fornecedores, sem troca de identificador |
 | Workflows de acesso, ativos | OLV Login `W4qgfRIna8BIRUVz`, OLV Contas `UBMRIgBy2jcBESBw`. Camada compartilhada, não saem na virada. Seção 4.1 |
 | Workflows desativados na virada | OLV Painel Mobile `WAiagumIwB8viELn`; OLV Vendas `9Fx0Y4zvPq7PcHKK`; OLV Estoque `fgmMA5a6hiEZr9z2`. **Desativados, não excluídos.** Ponto de retorno |
 | Tabelas internas do n8n | OLV Usuarios `T0MSOwzSF6VH4ngX` e OLV Painel HTML |
 | Pontos de restauração (v1.4) | Painel 63bf15bb; Vendas 348ed17a; Estoque 2adfcba0 |
-| Identificadores dos workflows novos, **conferidos em 07/08/2026** | Dados `fi2DPaA6qL7MxwIV`; Pedido `aPr6vx4oesVfkLis`; **Estoque `V3LHZ9kYui2NMMu0`**; Clientes `ClsDIM8jVRB5fijC`; Cadastros `fV9fzAM81cT2Pvma`; **Financeiro `ASx4FI8ZZEFcmv07`**; **Resultados `d2rKeJd5vbzNOJpj`** |
+| Identificadores dos workflows novos, **conferidos em 08/08/2026, inalterados desde a v5.1** | Dados `fi2DPaA6qL7MxwIV`; Pedido `aPr6vx4oesVfkLis`; **Estoque `V3LHZ9kYui2NMMu0`**; Clientes `ClsDIM8jVRB5fijC`; Cadastros `fV9fzAM81cT2Pvma`; **Financeiro `ASx4FI8ZZEFcmv07`**; **Resultados `d2rKeJd5vbzNOJpj`** |
 | IDs antigos que **não** valem mais | Estoque `3l15lOfGCeYqLEu7` e Financeiro `q4Bbzx7BSn6EiwjQ`, escritos até a v5.0. Trocaram porque a publicação foi feita substituindo o workflow por uma cópia nova. Ver seção 4.2 |
 | Cópias de backup, desativadas | BACKUP OLV2 Estoque `gwKsvNj6AbBvho9B`; BACKUP OLV2 Financeiro `WqwpnFh4yHu7LPIG`; BACKUP OLV2 Financeiro v10 `nGZFU6PchJgh7rmW` |
-| Banco de dados | Supabase PostgreSQL 17, projeto olv-distribuidora_sistema (`ggvfrnympdrqyqxgcyex`), região São Paulo. **10 tabelas de movimento, 6 de cadastro, 5 views de apoio**, RLS ativa, conferido em 07/08/2026. **Papéis públicos sem acesso ao schema `public` desde 31/07/2026** |
-| Volume real em 07/08/2026 | 936 clientes, 6 produtos, 121 pedidos (01/08 a 07/08), 125 itens, 126 pagamentos, 34 recebimentos, 28 contas a pagar, 13 baixas, 17 movimentações de estoque, 0 ajustes de conta |
+| Banco de dados | Supabase PostgreSQL 17, projeto olv-distribuidora_sistema (`ggvfrnympdrqyqxgcyex`), região São Paulo. **10 tabelas de movimento, 7 de cadastro (17 ao todo), 5 views de apoio**, RLS ativa nas 17, conferido em 08/08/2026. **Papéis públicos sem acesso ao schema `public` desde 31/07/2026** |
+| Volume real em 08/08/2026 | 949 clientes, 6 produtos, **6 fornecedores**, 165 pedidos (desde 01/08), 175 itens, 171 pagamentos, 44 contas a receber, 29 contas a pagar, 14 baixas, 18 movimentações de estoque, 0 ajustes de conta |
 | Rotina de fechamento de acesso | `fechar_acesso_publico()` e `auditar_acesso_publico()`, criadas em 01/08/2026. Rodar depois de **toda** migração. Seção 8.6 |
 | Funções de gravação de pedido | `registrar_venda` (criar) e `atualizar_venda` (editar por completo). As duas numa transação só, as duas capturando a taxa do cartão. A `atualizar_venda` recusa pedido com baixa lançada, desde 01/08/2026 |
 | Funções do financeiro | `financeiro_operar`, `registrar_baixa`, `estornar_baixa`, `criar_receber`, `excluir_receber`, `criar_pagar`, `editar_pagar`, `excluir_pagar`, `somar_dias_uteis` e `fluxo_caixa_consultar`. As operações financeiras são exclusivas do administrador, com trava positiva no endpoint e no banco |
 | Funções da seção Contas (03/08/2026) | `contas_consultar`, `saldo_conta_calculado`, `conta_ajustar`, `conta_conciliar` e `estornar_ajuste_conta`. Todas exclusivas do administrador. Seção 3.14 |
-| Views de apoio | `vw_pedidos`, `vw_estoque_atual`, `vw_contas_receber`, `vw_contas_pagar` e `vw_resultados` (05/08/2026) |
-| Cadastros do financeiro | `contas`, `maquininhas`, `bandeiras`, `taxas_cartao`, `formas_pagamento`, `categorias_conta_pagar`. Criados em 31/07/2026, com workflow (OLV2 Cadastros) e tela publicados no mesmo dia. Seções 3.12, 4.3 e 5.4 |
+| Views de apoio | `vw_pedidos`, `vw_estoque_atual`, `vw_contas_receber`, `vw_contas_pagar` e `vw_resultados` (05/08/2026). A `vw_resultados` ganhou `pagamentos_detalhe` em 08/08/2026 e a `vw_contas_pagar` ganhou `fornecedor_id` no mesmo dia |
+| Cadastros do financeiro | `contas`, `maquininhas`, `bandeiras`, `taxas_cartao`, `formas_pagamento`, `categorias_conta_pagar`, criados em 31/07/2026, mais **`fornecedores`**, criada em 08/08/2026. Workflow OLV2 Cadastros e tela de Cadastros cobrem as oito. Seções 3.12, 3.15, 4.3 e 5.4 |
+| Migrações de 08/08/2026 | `vw_resultados_add_pagamentos_detalhe`; `criar_fornecedores_e_ligar`; `criar_pagar_com_fornecedor_id`; `editar_pagar_com_fornecedor_id`; `cadastro_operar_base_v24_add_fornecedores`; `vw_contas_pagar_add_fornecedor_id_v2`; `financeiro_operar_add_fornecedores_listar_pagar`. Todas seguidas de `fechar_acesso_publico()`, com auditoria em zero linhas |
 | Maquininha e taxas | Rede. Padrão (Mastercard e Visa) e Outras (Elo). Débito 0,69 e 1,49; crédito à vista 2,71 e 3,51; 2x 3,78 e 4,58; 3x 4,35 e 5,15. `prazo_debito_dias` e `prazo_credito_dias` em 1 dia útil. Pix sem taxa |
 | Conexão n8n para Supabase | Session Pooler IPv4, host aws-0-sa-east-1.pooler.supabase.com, porta 5432, base postgres, usuário postgres.ggvfrnympdrqyqxgcyex, SSL ativo. Credencial "Supabase OLV" |
 | Domínio | olvdistribuidora.com.br no Registro.br. painel.olvdistribuidora.com.br configurado no Cloudflare e no ar desde 30/07/2026 |
-| Fonte de clientes | Google Contatos, 910 importados em 30/07/2026. **936 clientes em 07/08/2026**, os 26 a mais cadastrados pela operação |
-| Painel HTML atual | **Publicado.** Worker `painel-olv` no Cloudflare, atualizado pela última vez em 07/08/2026. O v13 de 03/08 já não é o arquivo no ar, porque as telas Contas e Resultados entraram depois. **O número da versão não é legível pelo servidor e está pendente de confirmação por Rogério** |
+| Fonte de clientes | Google Contatos, 910 importados em 30/07/2026. **949 clientes em 08/08/2026**, os 39 a mais cadastrados pela operação |
+| Painel HTML atual | **Publicado.** Worker `painel-olv` no Cloudflare (`ffafb32017294e8ea1c09c86f2d01734`), atualizado pela última vez em **08/08/2026 às 14h36 UTC**, depois das migrações do dia. O arquivo no ar contém o módulo de Fornecedores. **Não existe número de versão dentro do arquivo**, ver a linha abaixo e a pendência 30 |
+| Marcador de versão do painel, **proposta de 08/08/2026** | Criar uma constante única no bloco `CONFIG` do painel, por exemplo `VERSAO: '2026-08-08.1'`, e exibi-la no rodapé do menu lateral, ao lado do nome do usuário. Três ganhos: Rogério confere pela tela qual arquivo está aberto sem abrir o Cloudflare; a IA confere pela mesma tela numa auditoria; e a versão passa a viajar junto com o arquivo, em vez de depender da memória de quem publicou. Custo: uma linha no `CONFIG` e uma no rodapé, e a disciplina de mexer nela a cada publicação. **Não aplicada, aguardando decisão de Rogério.** Encerra a pendência 30 |
 | Cores do painel | Upgrade visual v13 aprovado em 03/08/2026. Usa azuis, verde e branco da identidade comercial da OLV, amarelo para destaque e vermelho para alerta, com temas claro e escuro |
 | Favicon / ícone de app | Embutido no HTML como data URI: favicon 16/32px, apple-touch-icon 180px, ícone de manifest 192px, cantos com transparência real |
 | Documento oficial | GitHub rogeriosandre/olv-distribuidora, Painel_OLV_Documentacao_e_Evolucao.md |
@@ -1746,10 +1841,10 @@ Separar duas coisas hoje misturadas:
 | POST /webhook/olv2-dados | `{acao, token, de, ate}` |
 | POST /webhook/olv2-pedido | `{acao, token, venda, itens, pagamentos, idempotency_key}` ou `{acao, token, venda_id, ...}`. Ações: `criar`, `editar`, `status`, `editar_leve`, `excluir` |
 | POST /webhook/olv-contas | `{action, token, usuario, senha, papel, ativo}`. Ações: `listar`, `criar`, `papel`, `ativo`, `trocar_senha`, `resetar_senha`. **Usa `action`, não `acao`**, por ser anterior aos endpoints OLV2 |
-| POST /webhook/olv2-estoque | `{acao, token, tipo, produto_id, quantidade, custo_unitario, fornecedor}`. Na Entrada, pode incluir `{gerar_conta_pagar, vencimento, parcela_total, periodicidade}` |
+| POST /webhook/olv2-estoque | `{acao, token, tipo, produto_id, quantidade, custo_unitario, fornecedor, fornecedor_id}`. `fornecedor_id` desde 08/08/2026. Na Entrada, pode incluir `{gerar_conta_pagar, vencimento, parcela_total, periodicidade}` |
 | POST /webhook/olv2-clientes | `{acao, token, nome, endereco, bairro, telefone}` ou `{acao, token, termo}` |
-| POST /webhook/olv2-cadastros | `{acao, token, tabela, ...campos da tabela}` |
-| POST /webhook/olv2-financeiro | Receber: `listar`, `criar`, `excluir`. Pagar: `listar_pagar`, `criar_pagar`, `editar_pagar`, `excluir_pagar`. Movimento: `baixar`, `estornar`, `fluxo_caixa`. Contas: `contas`, `ajustar_conta`, `conciliar_conta`, `estornar_ajuste_conta`. Filtros usam `{status, de, ate, termo, campo_data}`, com `campo_data` em `vencimento` (padrão), `emissao` ou `pagamento`; baixa usa um de `{conta_receber_id, conta_pagar_id}`, mais `{valor, data, forma, conta_id, observacao}` |
+| POST /webhook/olv2-cadastros | `{acao, token, tabela, ...campos da tabela}`. Tabelas aceitas: `produtos`, `contas`, `maquininhas`, `bandeiras`, `taxas_cartao`, `formas_pagamento`, `categorias_conta_pagar` e **`fornecedores`** (08/08/2026) |
+| POST /webhook/olv2-financeiro | Receber: `listar`, `criar`, `excluir`. Pagar: `listar_pagar`, `criar_pagar`, `editar_pagar`, `excluir_pagar`, os três últimos aceitando `fornecedor_id` desde 08/08/2026. Movimento: `baixar`, `estornar`, `fluxo_caixa`. Contas: `contas`, `ajustar_conta`, `conciliar_conta`, `estornar_ajuste_conta`. Filtros usam `{status, de, ate, termo, campo_data}`, com `campo_data` em `vencimento` (padrão), `emissao` ou `pagamento`; baixa usa um de `{conta_receber_id, conta_pagar_id}`, mais `{valor, data, forma, conta_id, observacao}` |
 | POST /webhook/olv2-resultados | `{acao: resultados, token, de, ate, cliente, forma, produto}`. Exclusivo do administrador. O campo `cliente` também aceita o número do pedido |
 
 Toda resposta traz `ok` verdadeiro ou falso. Quando falso, traz `erro` com mensagem pronta para exibir ao usuário.
@@ -1851,3 +1946,4 @@ Primeira linha da resposta: **Modelo indicado: [X]. Motivo: [tipo de tarefa].** 
 | 01/08/2026 | 4.0 | **Sessão Opus 5: Contas a Receber construída de ponta a ponta, mais dois bugs de produção corrigidos.** (a) **Pendência 18 fechada**: tabela `baixas` criada (seção 3.13), com as três travas e o status do pai calculado por releitura em vez de digitado, pelo mesmo raciocínio que resolveu o custo médio na pendência 13. Por isso a tela não tem botão de "marcar como recebido". (b) **Pendência 19 fechada**: a `atualizar_venda` passou a recusar pedido que já tenha baixa lançada, com mensagem pedindo o estorno antes. (c) **Endpoint OLV2 Financeiro construído e publicado** (`q4Bbzx7BSn6EiwjQ`), copiando nó a nó o padrão do OLV2 Cadastros, com duas travas de administrador em série e o `responsavel` da baixa vindo do token, nunca do navegador. Seção 4.4. (d) **Tela de Contas a Receber publicada** (seção 5.6), com quatro indicadores, filtros de situação, busca no servidor e histórico de baixas por linha. (e) **Lançamento manual criado a pedido do Rogério**: funções `criar_receber` e `excluir_receber`, com a trava de que só o que foi lançado à mão pode ser excluído, e só enquanto não tiver nenhuma baixa. Seção 3.8. (f) **Filtro de vencimento com horizonte**, atalhos de 30 dias, 3 meses e 12 meses, com o limite escrito na tela para nada sumir sem a pessoa perceber. (g) **Botão Atualizar removido**: a tela recarrega sozinha a cada visita, como as demais. (h) **Bug de layout corrigido na tela de Vendas**: as colunas do quadro tinham altura máxima calculada por chute (altura da janela menos 320 pixels), e em janela mais baixa o último cartão ficava cortado. Trocado por layout de altura real, com uma única área de rolagem. (i) **Bug de data corrigido, achado na conferência**: data pura era lida pelo navegador como meia-noite em Londres, e o vencimento aparecia um dia antes do que estava gravado. Pendência 25. (j) **Pendência 24 registrada**: a tabela `maquininhas` não tem prazo de crédito, ao contrário do que este documento afirmava. **Bloqueia o Fluxo de Caixa.** (k) Registrado na 9.4 o que falta para Contas a Pagar e para o Fluxo de Caixa, com as decisões que travam cada um. (l) `fechar_acesso_publico()` rodada depois de cada migração, com a auditoria devolvendo zero linhas.
 | 03/08/2026 | 5.0 | **Contas a Pagar, pendência 24, Fluxo de Caixa, correções de produção e upgrade visual.** (a) **Contas a Pagar concluída de ponta a ponta**: `contas_pagar` ganhou série, parcela, modo de geração, periodicidade e ligação com estoque; criadas `vw_contas_pagar`, `criar_pagar`, `editar_pagar` e `excluir_pagar`; OLV2 Financeiro ganhou `listar_pagar`, `criar_pagar`, `editar_pagar` e `excluir_pagar`; tela publicada e testada. (b) **Decisões de recorrência fechadas por Rogério**: quantidade gerada de uma vez, modos Repetição e Parcelamento, periodicidade Mensal e Semanal, e edição somente da atual ou da atual mais as seguintes. (c) **Entrada de estoque ligada ao financeiro**: geração de conta a pagar continua opcional e, quando marcada, pergunta primeiro vencimento, quantidade e periodicidade. (d) **Pendência 24 fechada**: `maquininhas` ganhou `prazo_debito_dias` e `prazo_credito_dias`; Rede preenchida com 1 dia útil em ambos. (e) **Fluxo de Caixa concluído**: criadas `somar_dias_uteis` e `fluxo_caixa_consultar`; OLV2 Financeiro ganhou `fluxo_caixa`; tela publicada e testada com realizados, previstos, entradas, saídas e busca. Corrigida a confusão entre compromisso futuro e dinheiro já movimentado. (f) **Regra de conta de destino corrigida**: Crediário, Em aberto e Gás do Povo escolhem a conta na baixa; Gratuidade não movimenta dinheiro; cartão usa a conta da maquininha; só formas que entram na hora exigem destino no cadastro. (g) **Resumos financeiros passaram a respeitar o intervalo** em Contas a Pagar e Contas a Receber. No Fluxo de Caixa, os cartões do topo acompanham o período e usam rótulos curtos. (h) **Gás do Povo corrigido**: passou a gerar recebível com vencimento em 3 dias úteis e conta escolhida na baixa; vendas anteriores sem recebível foram reparadas com proteção contra duplicidade. (i) **Painéis v8 a v12** acrescentaram abertura mensal, lista de Pedidos com filtros e totais, pesquisa durante a digitação, ajustes de dimensões e Fluxo de Caixa. (j) **Painel v13 implementado em 03/08/2026**, depois de simulações aprovadas: upgrade visual completo com identidade da OLV, temas claro e escuro, login redesenhado, menu dividido em Vendas, Pedidos, Estoque e Movimentações, Dashboard com Faturamento, Gastos, Lucro, Margem, comparação, gráfico com pontos, formas de pagamento, Atenção hoje e itens vendidos; Clientes ganhou compra no mês e histórico. O Fluxo de Caixa ficou sem gráfico por decisão de Rogério. (k) v13 verificado localmente com JavaScript válido, sem dependência externa e sem dados de teste; aguarda publicação no Cloudflare e teste final no endereço real. (l) Todas as migrações terminaram com `fechar_acesso_publico()` e auditoria pública em zero linhas, conforme a seção 8.6. |
 | 07/08/2026 | 5.1 | **Sessão de conferência: documento comparado com a estrutura viva do Supabase, do n8n e do Cloudflare.** Nada foi alterado no sistema; a versão só registra o que já existia e não estava escrito. (a) **Tabela `contas_ajustes` documentada** (nova seção 3.14), criada em 03/08/2026, com as funções `contas_consultar`, `saldo_conta_calculado`, `conta_ajustar`, `conta_conciliar` e `estornar_ajuste_conta`. Conciliar grava só a diferença entre o saldo informado e o calculado, pelo mesmo raciocínio da pendência 13. (b) **View `vw_resultados` documentada** (seção 3.9), criada em 05/08 e ajustada em 06/08. É aditiva e separa a parte à vista da parte a prazo do pedido, para nenhum real ser contado duas vezes. (c) **Endpoint OLV2 Resultados documentado** (nova seção 4.5), `d2rKeJd5vbzNOJpj`, ativo desde 05/08, com os filtros rodando em JavaScript por causa da armadilha da seção 8.5. (d) **Telas Contas e Resultados documentadas** (novas seções 5.10 e 5.11). (e) **Gás do Povo deixou de gerar recebível em 05/08/2026** e passou a ser projetado como cartão, em 3 dias úteis. A seção 3.5 foi corrigida e o efeito colateral virou a **pendência 26**: não existe mais onde registrar atraso ou diferença no repasse. (f) **Identificadores corrigidos**: OLV2 Estoque é `V3LHZ9kYui2NMMu0` e OLV2 Financeiro é `ASx4FI8ZZEFcmv07`; os IDs escritos até a v5.0 pertencem a cópias desativadas. Criada a regra 11 das instruções. (g) **Contagens corrigidas**: 10 tabelas de movimento, 6 de cadastro e 5 views; 936 clientes; 121 pedidos entre 01/08 e 07/08; 16 avisos informativos do auditor, nenhum de nível WARN, e `auditar_acesso_publico()` em zero linhas. (h) **Pendência 20 fechada** e **21 quase fechada**: falta só o Caixa da Loja, e sem `data_inicial` a conciliação dessa conta é recusada. (i) **Publicação do painel confirmada**: o Worker `painel-olv` foi atualizado em 07/08/2026, encerrando a pendência que vinha desde 03/08. O número da versão do HTML não é legível pelo servidor e fica para Rogério confirmar. (j) **Pendências novas 27 e 28**: duas colunas chamadas `lucro` com sentidos diferentes na `vw_pedidos` e na `vw_resultados`, e `contas_ajustes` sem nenhum lançamento desde que foi criada. (k) Documentados o filtro `campo_data` e a busca por número de pedido, de 07/08/2026, incluindo o efeito de a lista passar a ter uma linha por baixa quando o filtro é por pagamento. |
+| 08/08/2026 | 5.2 | **Módulo de Fornecedores documentado, e três divergências entre o documento e o sistema corrigidas.** Conferido contra o Supabase, o n8n, o Cloudflare e o arquivo do painel nesta data. (a) **Tabela `fornecedores` documentada** (nova seção 3.15), criada em 08/08/2026 com nome único, e ligada por `fornecedor_id` a `contas_pagar` e a `estoque_movimentacoes`, as duas sem cascata. Passam a ser **17 tabelas: 10 de movimento e 7 de cadastro**. (b) **Sete migrações de 08/08/2026 registradas** na seção 11, incluindo `vw_resultados_add_pagamentos_detalhe` e `vw_contas_pagar_add_fornecedor_id_v2`. Auditoria de acesso público em zero linhas depois de todas. (c) **Quatro workflows republicados em 08/08/2026** (Cadastros, Estoque, Financeiro e Clientes), **sem troca de identificador**, o que corrige a leitura de que publicar sempre troca o número: troca quando a publicação substitui o workflow por uma cópia, não quando atualiza no lugar. Seção 4.2. (d) **Telas atualizadas**: Cadastros passou de sete para oito abas (5.4); Estoque ganhou campo de fornecedor com sugestões e filtro por fornecedor no histórico (5.2). (e) **Auditoria de permissão da criação automática de fornecedor**, conforme a regra 8: o campo só aparece em Entrada e Estoque Inicial, exclusivos do administrador, e a tela de Contas a Pagar também é. Nenhum colaborador alcança o endpoint de cadastros. Seção 3.15. (f) **Corrigido**: a seção 4.4 ainda trazia o identificador antigo do OLV2 Financeiro, `q4Bbzx7BSn6EiwjQ`, que pertence a uma cópia desativada. O certo é `ASx4FI8ZZEFcmv07`, como a 4.2 já dizia. (g) **Corrigido**: o documento afirmava que o Fluxo de Caixa estava no ar. Ele está **oculto no menu desde 05/08/2026** por decisão de Rogério, com a tela inteira preservada e reativação por uma linha. Seção 5.8. (h) **Nova seção 8.7 e nova regra 13**: o arquivo do painel carrega um retrato da tela congelado em 31/07/2026, e quem ler o HTML sem executar JavaScript enxerga um menu antigo com itens "Em construção". O menu real está na constante `ITENS_MENU`. Foi essa armadilha que quase virou um diagnóstico errado de publicação atrasada. (i) **Nova seção 5.0** com o mapa do menu conferido no arquivo, como índice da seção 5. (j) **Pendências novas 29 e 30**: `fornecedor` em texto e `fornecedor_id` guardam a mesma informação e divergem se o fornecedor for renomeado, decidida como pendência aberta por Rogério; e o arquivo do painel não tem número de versão em lugar nenhum, que é a causa real da pendência que vinha desde a v5.0, com proposta de marcador na seção 11. (k) **Pendência 28 encerrada como esclarecida**: Rogério confirmou que a tela de Contas funciona e é encontrada, e que o zero em `contas_ajustes` é porque o financeiro ainda não fez os lançamentos. Não é defeito, é adoção. **A pendência 21 foi reforçada em troca**: como nenhum ajuste foi feito ainda, a primeira tentativa tende a ser no Caixa da Loja, que está sem saldo e data iniciais e por isso será recusada, com risco de a recusa ser lida como tela quebrada. Seções 3.11 e 5.10. (l) Volume real atualizado: 949 clientes, 165 pedidos, 6 fornecedores. Nada foi alterado no sistema nesta sessão. |
