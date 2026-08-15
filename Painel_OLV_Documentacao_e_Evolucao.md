@@ -3,7 +3,7 @@
 
 **Documentação do funcionamento e plano de evolução**
 
-Versão 5.2 · 08/08/2026
+Versão 5.3 · 14/08/2026
 Preparado para Rogério
 
 ---
@@ -25,6 +25,8 @@ Este documento é a fonte única de verdade do projeto. Quando você o mencionar
 11. **Identificador de workflow não é permanente (criada em 07/08/2026)**: publicar substituindo o workflow ativo por uma cópia gera um ID novo e aposenta o antigo. Antes de auditar um workflow pelo ID escrito aqui, confirme o nome, senão você audita uma cópia desativada achando que é produção. Motivo na seção 4.2.
 12. **Conferência contra o real (criada em 07/08/2026)**: quando a tarefa for atualizar este documento, leia a estrutura viva antes de escrever, não só o histórico. Tabelas, views e funções do Supabase, lista de workflows do n8n e data de atualização do Worker no Cloudflare. Foi assim que a v5.1 encontrou uma tabela, uma view, um endpoint, duas telas e dois identificadores que o documento não tinha.
 13. **O painel se audita pelo `ITENS_MENU`, não pelo corpo do HTML (criada em 08/08/2026)**: o arquivo do painel carrega, dentro do `<body>`, um retrato antigo da tela já desenhada. Quem ler o HTML sem executar JavaScript enxerga o painel como ele era naquele retrato, não como ele está. Para saber quais telas existem, leia a constante `ITENS_MENU` no script. Motivo na seção 8.7.
+14. **Campo que o painel manda precisa existir nos três lugares (criada em 14/08/2026)**: um campo novo só chega ao banco se passar pelo nó que normaliza o corpo do webhook, pelo nó que monta o payload e pela função. A função `credito_gerar` aceitava `data` desde 12/08, e mesmo assim a data escolhida na tela seria descartada, porque os dois nós do n8n montam objetos com campos nomeados. Antes de prometer um campo na tela, confira o caminho inteiro. Motivo na seção 4.6.
+15. **Tela nova com número: confira quem pode ver (criada em 14/08/2026)**: qualquer coisa que **some valores por cliente, por produto ou por período** é dado financeiro e cai na pendência 11, mesmo que a tela em que ela aparece seja aberta a todos. O ranking da tela Clientes nasceu exclusivo do administrador por isso. Motivo na seção 5.12.
 
 ---
 
@@ -198,7 +200,7 @@ Uma venda pode ter várias linhas aqui, o que permite pagamento dividido.
 |-------|------|-------|
 | id | ID | Chave |
 | venda_id | Ligação | Obrigatório, com cascata |
-| forma | Texto | Obrigatório, **validado** com as 8 formas abaixo |
+| forma | Texto | Obrigatório, **validado** com as 9 formas abaixo |
 | valor | Número | Obrigatório, não negativo. **Sempre o valor cheio**, o que o cliente pagou |
 | maquininha_id | Ligação | **Criado em 01/08/2026.** Aponta para maquininhas, com RESTRICT. Só no cartão |
 | taxa_id | Ligação | Qual linha de `taxas_cartao` foi aplicada. Serve para auditar de onde veio o número |
@@ -213,7 +215,7 @@ Uma venda pode ter várias linhas aqui, o que permite pagamento dividido.
 
 **Travas novas de 01/08/2026**: `ck_pag_grupo`, `ck_pag_modalidade`, `ck_pag_parcelas`, `ck_pag_taxa_pct` e `ck_pag_cartao_coerente`, esta última impedindo pagamento meio cartão e meio não.
 
-**As 8 formas de pagamento (definidas em 30/07/2026):**
+**As 9 formas de pagamento (8 definidas em 30/07/2026, a nona em 12/08/2026):**
 
 | Forma | Gera conta a receber | Vencimento |
 |---|---|---|
@@ -225,6 +227,9 @@ Uma venda pode ter várias linhas aqui, o que permite pagamento dividido.
 | Gás do Povo | ~~Sim~~ **Não, desde 05/08/2026** | projetado no Fluxo de Caixa em 3 dias úteis, como cartão |
 | Gratuidade | Não | zera o pedido, ver abaixo |
 | Pix | Não | entra no caixa |
+| **Vale-Crédito** (12/08/2026) | Não | **não movimenta conta nenhuma.** O dinheiro entrou na geração do crédito, ver 3.16 |
+
+**Vale-Crédito é a única forma com todos os interruptores desligados e `conta_destino_id` nulo, e isso é proposital.** O bloco 2 da `conta_movimentos` faz o pagamento entrar em conta exatamente quando a forma tem conta de destino preenchida. Preencher esse campo faria todo consumo de crédito entrar como dinheiro na conta, contando o mesmo real duas vezes, sem nenhum erro na tela. O erro só apareceria na conferência de saldo, semanas depois. O campo foi fechado **no painel** em 14/08/2026 (decisão 18), e continua aberto no banco: é a pendência 31.
 
 **Crédito e Débito não geram conta a receber.** O Fluxo de Caixa projeta o valor líquido diretamente de `pagamentos`, na data calculada pelo prazo da maquininha.
 
@@ -368,6 +373,55 @@ A tabela resolve isso. É o mesmo movimento que já tinha sido feito com cliente
 
 **O nome continua sendo gravado junto com a ligação**, nas duas tabelas. É a pendência 29.
 
+### 3.16 creditos_movimentacoes (criada em 12/08/2026)
+
+O Vale-Crédito é **saldo do cliente na loja**. O cliente paga hoje e busca o produto depois, ou paga adiantado por qualquer motivo, e esse valor fica guardado no nome dele até ser gasto num pedido.
+
+A palavra "crédito" aqui não é empréstimo nem crediário. É o contrário: **o dinheiro já entrou**. No crediário a loja entrega e espera receber; no Vale-Crédito a loja recebeu e ainda vai entregar.
+
+**Nada de saldo é guardado.** Não existe coluna de saldo em lugar nenhum. A tabela guarda movimentos, e o saldo é a soma deles, calculada na hora pela view. É o mesmo raciocínio que resolveu o custo médio na pendência 13 e o status das contas na pendência 18: valor incremental gravado sobre histórico editável é a forma mais confiável de produzir número errado que ninguém consegue explicar.
+
+| Campo | Tipo | Regra |
+|-------|------|-------|
+| id | ID | Chave |
+| cliente_id | Ligação | Obrigatório. De quem é o saldo |
+| tipo | Texto | **Validado**: `ENTRADA`, `SAIDA`, `ESTORNO_ENTRADA`, `ESTORNO_SAIDA` |
+| valor | Número | Sempre positivo. O sinal fica no `efeito` |
+| efeito | **Calculado** | `+valor` na entrada e no estorno de saída; `−valor` na saída e no estorno de entrada. **É esta coluna que a soma do saldo usa** |
+| data | Data | Dia do movimento. Começa em hoje e aceita data passada desde 14/08/2026 |
+| data_caixa | Data | Dia em que o dinheiro entra na conta. Igual à `data` no Dinheiro e no Pix; no cartão e no Gás do Povo, `data` mais o prazo do cadastro |
+| venda_id, venda_numero, pagamento_id | Ligação | Só no consumo. Qual pedido gastou o crédito |
+| conta_id | Ligação | Em qual conta o dinheiro caiu, só na geração |
+| forma_entrada | Texto | Como o cliente pagou. Só na geração |
+| estorno_de_id | Ligação | Aponta para o movimento que este estorno desfaz |
+| idempotency_key | Texto | Toque duplo no botão devolve o mesmo movimento, em vez de gerar dois créditos |
+| maquininha_id, taxa_id, grupo, modalidade, parcelas, taxa_pct, taxa_valor, valor_liquido | Vários | Espelham o bloco de cartão de `pagamentos`. Só quando a geração foi no cartão |
+| e_de_terceiro | Sim/Não | Copiado do cadastro da forma |
+| observacao, responsavel, criado_em | Vários | `responsavel` vem do token, nunca do navegador |
+
+**`vw_creditos_clientes`**: a sexta view. Uma linha por cliente com saldo diferente de zero, com `cliente_id`, nome e a soma dos `efeito`. É a única fonte de saldo do sistema.
+
+**As quatro funções:**
+
+| Função | Criada | O que faz |
+|---|---|---|
+| `credito_gerar` | 12/08 | Grava a `ENTRADA`, resolve a conta de destino pela forma, calcula a `data_caixa` pelo prazo do cadastro e captura a taxa do cartão pela vigência **na data escolhida** |
+| `credito_estornar` | 12/08 | Grava a linha de estorno apontando para o movimento original. Não apaga nada |
+| `credito_extrato` | 13/08 | Devolve saldo, nome e os últimos movimentos. Quem não é administrador **não recebe** conta, data de caixa nem taxa |
+| Gatilho `before delete` em `vendas` | 13/08 | Grava `ESTORNO_SAIDA` quando o pedido que consumiu crédito é excluído |
+
+**Por que gatilho e não função nova.** A exclusão de pedido no OLV2 Pedido é um `delete from vendas` cru, não uma chamada de função. O gatilho pega esse caminho e qualquer outro que apareça depois. Não é cascata silenciosa: a saída fica onde está e nasce uma linha de estorno apontando para ela, então o extrato continua contando a história inteira.
+
+**O consumo é gravado dentro da transação do pedido.** A `registrar_venda` trava a linha do cliente com `select ... for update`, lê o saldo, e **recusa o pedido inteiro** se o Vale-Crédito passar do que existe, dizendo na mensagem o saldo disponível. Não existe pedido meio gravado com crédito consumido, nem crédito consumido sem pedido.
+
+**Duas recusas na `atualizar_venda`**: pedido que consumiu crédito não pode ser editado, e Vale-Crédito não pode ser escolhido como forma numa edição. Editar significa excluir e lançar de novo, e a exclusão devolve o crédito sozinha.
+
+**O consumo nunca aparece em conta.** Quando o cliente paga com Vale-Crédito, nenhum dinheiro entra na loja: ele entrou lá atrás, na geração. A `conta_movimentos` continua sendo a fonte única do movimento de conta, e o consumo não passa por ela. Ver 3.5.
+
+**Em Resultados, o Vale-Crédito conta no dia da venda**, como qualquer outra forma à vista. A geração do crédito **não aparece** em Resultados, e isso é o desenho, não esquecimento: a `vw_resultados` enxerga `vendas`, `pagamentos` e `baixas`, e a geração só grava em `creditos_movimentacoes`. O efeito real disso é **deslocamento de data**, não contagem dupla: o dinheiro entra na conta no dia 10 e a receita aparece em Resultados no dia 20.
+
+**Em uso real desde 14/08/2026**, com quatro gerações retroativas somando R$ 409,34 em saldo de quatro clientes.
+
 ### 3.9 Como as tabelas se ligam, e as views
 
 ```
@@ -423,6 +477,10 @@ Ela junta duas origens numa lista só, com uma linha por evento:
 **A taxa do cartão já está descontada** na coluna `lucro` desta view, ao contrário do `lucro` da `vw_pedidos`, que é bruto por decisão da 9.4. São nomes iguais com sentidos diferentes em views diferentes; ao comparar os dois números, é aqui que a diferença nasce.
 
 **Duas colunas que não viajam para o navegador**: `formas_filtro` e `produto_ids` existem só para o endpoint filtrar e são removidas antes de responder. Ver seção 4.5.
+
+**`vw_creditos_clientes` (criada em 12/08/2026)**: a sexta view, e a mais simples de todas. Uma linha por cliente com saldo de Vale-Crédito diferente de zero. Detalhada na seção 3.16.
+
+**São 18 tabelas e 6 views em 14/08/2026**, com a `creditos_movimentacoes` e a `vw_creditos_clientes` somadas.
 
 ### 3.10 Travas do banco
 
@@ -525,7 +583,16 @@ O que fica: se algum dia for preciso abrir algo para a API REST, a abertura é e
 | 27 | **Duas colunas chamadas `lucro` com sentidos diferentes** | **Aberta em 07/08/2026.** Na `vw_pedidos`, `lucro` é **bruto**, sem a taxa do cartão, por decisão da 9.4. Na `vw_resultados`, `lucro` **já desconta** a taxa. Os dois estão certos dentro da própria view, e vão divergir quando comparados lado a lado no Dashboard e na tela Resultados. Renomear na `vw_resultados` para `lucro_liquido` é a saída, e é mudança de nome de coluna, não de regra. Ver seção 3.9 |
 | 28 | ~~`contas_ajustes` existe e não tem uso~~ | **Esclarecida em 08/08/2026 por Rogério.** Das duas hipóteses levantadas em 07/08, cai a técnica: a tela de Contas está no ar, é encontrada e funciona. **O que falta é o financeiro fazer os lançamentos de ajuste**, que ainda não entraram na rotina. Não é defeito, é adoção, então sai da lista de pendências. O que sobra de risco está na pendência 21, e é o cadastro do Caixa da Loja |
 | 29 | **Duas colunas guardam o mesmo fornecedor** | **Aberta em 08/08/2026, decidida como pendência por Rogério.** `contas_pagar` e `estoque_movimentacoes` têm `fornecedor` (texto) e `fornecedor_id` (ligação), e o painel grava as duas. Renomear um fornecedor no cadastro **não** atualiza o texto já gravado, então os lançamentos antigos passam a mostrar um nome e apontar para outro. Hoje ninguém percebe porque nenhum fornecedor foi renomeado. Duas saídas possíveis: assumir o texto como histórico congelado de propósito, como já é o custo do item na venda, ou parar de gravar o texto e ler sempre pela ligação. **Falta decidir qual.** Ver 3.15 |
-| 30 | **O arquivo do painel não tem número de versão** | **Aberta em 08/08/2026.** A v5.1 registrou que a versão do HTML no ar não era legível pelo servidor. A conferência desta versão achou a causa: o número **não existe dentro do arquivo**, em nenhum comentário, constante ou rodapé. Enquanto for assim, ninguém consegue provar qual arquivo está publicado, nem o servidor nem uma pessoa olhando a tela. Proposta na seção 11 |
+| 30 | ~~O arquivo do painel não tem número de versão~~ | **Resolvida em 11/08/2026 (decisão 9) e em uso desde então**: `CONFIG.VERSAO` no topo do arquivo, mostrado no rodapé do menu lateral ao lado do usuário logado. Em 14/08/2026 está em `2026-08-14.2`. Quem publicar tem de subir o número |
+| 31 | **Conta destino do Vale-Crédito continua aberta no banco** | **Aberta em 13/08/2026, encaminhada em 14/08.** Preencher `formas_pagamento.conta_destino_id` do Vale-Crédito faria todo consumo de crédito entrar como dinheiro na conta, contando o mesmo real duas vezes, **sem erro nenhum na tela**. **A decisão 18 fechou o caminho no painel**: o campo não aparece no formulário de Cadastros quando a forma é Vale-Crédito, e uma frase explica o motivo. **No banco continua aceito**: quem mexer direto ainda consegue quebrar. Fechar no banco não foi decidido. Ver 3.5 e 3.16 |
+| 32 | **Taxa do cartão some do lucro do pedido pago com crédito** | **Aberta em 13/08/2026, e é a de maior risco financeiro da lista.** Crédito gerado no cartão paga taxa **na geração**, e ela fica em `creditos_movimentacoes`, não em `pagamentos`. O pedido pago com esse crédito aparece com **lucro cheio**. Em R$ 100 no crédito a 3%, o lucro sai R$ 3 otimista. Não existe erro, aviso ou tela onde isso apareça. **Ainda não se materializou**: das quatro gerações de 14/08/2026, nenhuma foi no cartão. Passa a doer no primeiro crédito gerado em Débito ou Crédito |
+| 33 | **Estorno automático da exclusão fica sem responsável** | **Aberta em 13/08/2026.** O gatilho `before delete` grava o motivo escrito, mas não quem fez, porque o `delete from vendas` do n8n não manda o usuário. Buraco de auditoria num movimento financeiro. Baixa gravidade |
+| 34 | **`Prep Financeiro` manda `is_admin: true` fixo no código** | **Aberta em 13/08/2026. Pré-existente, não veio do Vale-Crédito.** Inofensivo hoje porque o nó só é alcançado pelo ramo verdadeiro do `Admin F?`. Religar esse fio remove a trava sem aviso nenhum. É o mesmo formato do incidente da seção 8.2 |
+| 35 | **Segredo do token em texto puro nos cinco workflows** | **Aberta em 13/08/2026. Pré-existente.** Repetido cinco vezes, então trocar exige mexer nos cinco e errar em um deles derruba o login daquele endpoint |
+| 36 | **Campo `efeito` do extrato sem conteúdo conferido** | **Aberta em 14/08/2026.** A `credito_extrato` devolve um campo `efeito` que nenhuma sessão conferiu. O painel **não o usa**: deriva o sinal do valor pelo campo `tipo`, que está documentado. Se o `efeito` for a fonte correta, a troca é de uma linha. Ver 5.12 |
+| 37 | **Duas listas de formas que precisam andar juntas** | **Aberta em 14/08/2026.** `FORMAS_PAGAMENTO` (formulário de pedido e filtro de Resultados) e `ORDEM_FORMAS_PAGAMENTO` (ordem e cor da rosca do Dashboard) são listas separadas no painel, mais uma paleta de cores amarrada à segunda. A décima forma vai exigir lembrar das três. Esquecer não dá erro: a forma nova sai cinza e pode repetir a cor de outra |
+| 38 | **O texto `Vale-Crédito` é comparado por igualdade entre tela e servidor** | **Aberta em 14/08/2026.** O filtro de Resultados manda o nome da forma e o servidor casa contra `formas_filtro`. Acento e hífen precisam bater exatamente. Funcionou no teste de 14/08; fica registrado porque é o tipo de coisa que quebra em silêncio numa renomeação de cadastro |
+| 39 | **Data de geração de crédito sem limite para trás** | **Aberta em 14/08/2026.** O servidor recusa data futura, formato errado e data que não existe, mas aceita qualquer data passada. Um erro de digitação como 2020 no ano seria aceito e lançaria dinheiro em conta naquele ano. **Um piso é decisão de negócio**, não de código, por isso não foi escolhido sozinho. Ver 4.6 |
 
 A numeração 11, 12, 16 e 17 fica na seção 8.3, porque são pendências de segurança e de acesso. A série é única.
 
@@ -677,10 +744,10 @@ Prefixo OLV2 para não haver confusão com o conjunto anterior. **Ativados em 30
 
 | Workflow | Endpoint | Ações |
 |---|---|---|
-| OLV2 Dados (painel novo) | POST /webhook/olv2-dados | `tudo` (carga inicial) e `pedidos` (recarga leve) |
+| OLV2 Dados (painel novo) | POST /webhook/olv2-dados | `tudo` (carga inicial) e `pedidos` (recarga leve). Desde 13/08/2026, o `tudo` traz também o bloco `creditos` |
 | OLV2 Pedido (painel novo) | POST /webhook/olv2-pedido | `criar`, `editar`, `status`, `editar_leve`, `excluir` |
 | OLV2 Estoque (painel novo) | POST /webhook/olv2-estoque | `lancar`, `historico`, `excluir`. A Entrada pode chamar `criar_pagar` na mesma operação |
-| OLV2 Clientes (painel novo) | POST /webhook/olv2-clientes | `criar`, `editar`, `buscar` |
+| OLV2 Clientes (painel novo) | POST /webhook/olv2-clientes | `criar`, `editar`, `buscar`, `historico` e, desde 13/08/2026, `credito_gerar`, `credito_extrato` e `credito_estornar`. Detalhados na seção 4.6 |
 | OLV2 Cadastros (painel novo, 31/07/2026) | POST /webhook/olv2-cadastros | `listar`, `criar`, `editar`, `excluir` (ou `desativar` quando já usado), por tabela. **Oito tabelas desde 08/08/2026** |
 | OLV2 Financeiro (painel novo, 01/08/2026) | POST /webhook/olv2-financeiro | Receber, Pagar, baixas, estornos, `fluxo_caixa` e, desde 03/08/2026, a seção Contas. Detalhados na seção 4.4 |
 | OLV2 Resultados (painel novo, 05/08/2026) | POST /webhook/olv2-resultados | `resultados`. Exclusivo do administrador. Detalhado na seção 4.5 |
@@ -811,6 +878,42 @@ Mesmo bloco de entrada dos outros seis endpoints, nó a nó: Normalizar, Autenti
 
 **Totais calculados no endpoint**: valor, custo, taxa, lucro, a receber, margem, número de vendas e número de recebimentos, sempre sobre as linhas que sobraram depois dos filtros.
 
+### 4.6 OLV2 Clientes: as três ações do Vale-Crédito (13/08/2026)
+
+Workflow ID `ClsDIM8jVRB5fijC`, **republicado no lugar**, sem trocar de identificador. Ganhou 18 nós e três ações novas.
+
+| Ação | Quem pode | O que devolve |
+|---|---|---|
+| `credito_gerar` | qualquer operador ativo | `movimento_id`, `saldo`, `cliente_nome`, `data_caixa`, `avisos` |
+| `credito_extrato` | qualquer operador ativo | `saldo`, `total_movimentos`, `mostrando`, `movimentos` |
+| `credito_estornar` | **só administrador** | `movimento_id`, `estorno_de`, `tipo`, `saldo` |
+
+Saídas do nó `Rotear Cliente`: 0 criar, 1 editar, 2 buscar, 3 historico, 4 credito_gerar, 5 credito_extrato, 6 credito_estornar, 7 ação inválida.
+
+**O `responsavel` vem do token, nunca do navegador**, e é ignorado se o navegador mandar. Testado com o corpo trazendo `responsavel: "INVASOR"`: gravou o usuário do token.
+
+**O estorno tem duas travas em série**, uma no nó de preparo e outra dentro da função. Colaborador é recusado antes de a chamada chegar ao banco.
+
+**A filtragem do extrato é no servidor**, conforme a seção 8.1. Quem não é administrador não recebe conta de destino, data de caixa nem taxa.
+
+**Auditoria da regra 8, feita em 13/08/2026**: os cinco workflows calculam administrador com a mesma linha positiva `String(_tokPapel)==='admin'`. Nenhuma comparação negativa contra rótulo. Nenhum estorno fora da trava de administrador.
+
+#### A data da geração, e a armadilha que ela revelou (14/08/2026)
+
+A `credito_gerar` **já aceitava** o campo `data` desde 12/08, com `coalesce(p->>'data', current_date)`. Mesmo assim, uma data escolhida na tela seria descartada em silêncio, porque **os dois nós do caminho montam objetos com campos nomeados**: o `Normalizar Clientes` não lia `data` do corpo do webhook, e o `Prep Gerar Credito` não a colocava no payload.
+
+Isto virou a regra 14 das instruções. Campo novo precisa existir nos três lugares: normalizador, preparo e função. Aceitar na função não basta, e o sintoma é o pior possível, que é nada acontecer.
+
+**Republicado em 14/08/2026** com os dois nós corrigidos. O `Prep Gerar Credito` passou a conferir a data em três etapas, e só inclui o campo no payload quando ele vier preenchido:
+
+| Conferência | Recusa |
+|---|---|
+| Formato | Qualquer coisa fora de AAAA-MM-DD, inclusive a data escrita como no Brasil |
+| Data que existe | 31 de fevereiro e parecidos |
+| Nunca futura | Comparada com o dia de **São Paulo**, não com o do servidor: depois das 21h o horário universal já virou o dia seguinte e liberaria amanhã |
+
+**Não existe limite para trás.** Uma data de 2020 seria aceita e lançaria dinheiro em conta naquele ano. Fica registrado como pendência 39, porque um piso é decisão de negócio, não de código.
+
 ---
 
 ## 5. O PAINEL (FUNCIONALIDADES ATUAIS)
@@ -824,6 +927,8 @@ Este é o menu como ele existe hoje, lido na constante `ITENS_MENU` do arquivo d
 | Operação | Dashboard, Vendas, Pedidos, Estoque, Movimentações, Clientes | Dashboard só o administrador; os outros cinco, qualquer usuário ativo |
 | Financeiro | Contas, Contas a Pagar, Contas a Receber, Resultados | Só o administrador |
 | Administração | Usuários, Cadastros | Só o administrador |
+
+**Conferido de novo em 14/08/2026**, com o painel executando. O Vale-Crédito **não criou item de menu**: ele vive dentro de Clientes e do formulário de pedido. Ver 5.12.
 
 **Fluxo de Caixa não aparece nesta lista de propósito.** A tela existe inteira e continua funcionando; só o item do menu está escondido, por decisão de Rogério em 05/08/2026. Ver 5.8.
 
@@ -960,6 +1065,52 @@ Filtros de período, cliente, forma de pagamento e produto. O campo de cliente *
 **Atenção ao lucro.** A coluna `lucro` desta tela **já desconta a taxa do cartão**; a do Dashboard, vinda da `vw_pedidos`, é bruta. Mesmo nome, sentidos diferentes. É a pendência 27.
 
 **Sem exposição nova**: a tela é exclusiva do administrador, e as duas colunas usadas só para filtrar (`formas_filtro` e `produto_ids`) são removidas antes de a resposta sair do servidor.
+
+**Filtro por forma de pagamento**: existe desde 04/08/2026 e lê a mesma lista de formas do formulário de pedido. Por isso o Vale-Crédito apareceu ali sozinho em 14/08/2026, sem uma linha de código nova e sem tocar na view.
+
+### 5.12 Vale-Crédito na tela Clientes (construída em 14/08/2026)
+
+A tela ganhou **uma coluna, um botão por linha e um modal**.
+
+**Coluna Vale-Crédito**: mostra o saldo do cliente. Saldo zero aparece como traço, no mesmo padrão de Custo e Taxa na tela Resultados. O valor exato, inclusive o zero, está dentro do extrato.
+
+**O saldo não é escondido do colaborador**, e isso é decisão, não descuido: ele precisa do número para vender. É a decisão 6.
+
+**Modal de Vale-Crédito**, aberto pelo botão da linha, com duas abas:
+
+| Aba | Quem pode | O que faz |
+|---|---|---|
+| Extrato | qualquer operador ativo | Lista os movimentos com data, tipo, valor com sinal, origem, responsável e observação. Administrador vê também conta, data de caixa e taxa |
+| Gerar crédito | qualquer operador ativo | Valor, forma de entrada (as cinco da decisão 10), **data** e observação |
+
+**Estorno**: botão só para o administrador, com confirmação em duas etapas, no padrão da exclusão de movimentação de estoque. Movimento que **não pode** ser estornado não mostra botão desabilitado: mostra **o motivo escrito**, que é um dos três, todos derivados de campos que o extrato já entrega.
+
+| Situação | O que a tela diz |
+|---|---|
+| O movimento já é um estorno | "Este movimento já é um estorno." |
+| Já foi estornado antes | "Este movimento já foi estornado." |
+| Saída ligada a pedido que ainda existe | "Consumo do pedido #N, que ainda existe. Excluir o pedido devolve o crédito sozinho." |
+
+**Chave de idempotência a cada tentativa de geração.** Dois cliques numa conexão lenta gerariam dois créditos, e desfazer o segundo seria trabalho manual do administrador.
+
+**O sinal do valor no extrato vem do campo `tipo`, não do campo `efeito`.** O conteúdo do `efeito` não foi conferido em nenhuma sessão, e mostrar sinal errado é pior que não mostrar. É a pendência 36.
+
+#### Filtro de período e ranking (14/08/2026)
+
+A tela passou a ter o **mesmo filtro de período das outras sete**, com as pílulas de atalho, o calendário e o teto de 90 dias. Com ele, o card e a coluna deixaram de falar em "mês" e passaram a falar em "período": **uma régua só na tela inteira**, em vez de dois intervalos convivendo.
+
+**Ranking dos três que mais compraram**, e o nome engana de propósito menos do que parece: ele soma **o que o cliente pagou**, não o que ele comprou.
+
+| Entram | Ficam de fora | Por quê |
+|---|---|---|
+| Dinheiro, Pix, Débito, Crédito, Vale-Crédito | Crediário e Em aberto | O dinheiro ainda não chegou |
+| | Gás do Povo | Quem paga é o programa do governo, não o cliente |
+| | Gratuidade | Vale zero de qualquer forma |
+| | Pedido não concluído | Mesma régua do card, que já contava só concluídos |
+
+**Exclusivo do administrador**, e é aqui que está o motivo que virou a regra 15 das instruções: somar valor por cliente é entregar faturamento por cliente, que é exatamente a pendência 11, mesmo numa tela que qualquer operador abre. O colaborador não vê o bloco; o filtro de período e a coluna de saldo continuam valendo para ele.
+
+**É recorte de tela sobre a lista já carregada**, igual ao filtro de Tipo em Resultados. Não é consulta nova e não enxerga pedido fora do período do filtro.
 
 ---
 
@@ -1336,6 +1487,28 @@ Existe um privilégio padrão do papel `supabase_admin` no schema `public` que *
 
 ---
 
+### 8.8 No CSS, min-width vence max-width (achado em 14/08/2026)
+
+**Como apareceu.** Rogério pediu para encurtar o campo de busca da tela Clientes, que ocupava a largura inteira. O estilo do campo **já pedia** `max-width: 420px`, e mesmo assim ele media 1040 pixels na tela. Lendo só o código, a conclusão fácil e errada seria que a regra não estava sendo aplicada.
+
+**O que era.** Uma regra geral, escrita para outra coisa, alcançava o elemento:
+
+```
+.area-principal > *{min-width:1040px}
+```
+
+Ela existe para as **tabelas** não espremerem em tela estreita, forçando a barra de rolagem horizontal em vez de amassar as colunas. Só que ela pega todo filho direto da área principal, e a barra de busca é um deles.
+
+**A parte que engana.** No CSS, quando `min-width` e `max-width` brigam, **`min-width` ganha sempre**, por definição da especificação, e não por especificidade de seletor. Não adianta acrescentar `!important` no `max-width`. O navegador mostra os dois valores como aplicados, e só medindo o elemento se percebe qual venceu.
+
+**Corrigido** com uma exceção nomeada para a barra que foi desenhada para ser curta.
+
+**O mesmo problema continua** no filtro de Tipo da tela Estoque, que pede `max-width: 230px` e também é filho direto da área principal. Não foi tocado porque não fazia parte do pedido. Uma linha resolve.
+
+**Regra que fica**: largura que "não obedece" no painel, sem erro nenhum e sem regra concorrente óbvia, quase sempre é um `min-width` herdado de uma regra geral. Meça o elemento antes de reescrever o estilo.
+
+---
+
 ## 9. PLANO DE EVOLUÇÃO *
 
 Ciclo de cada etapa: definir o escopo, implementar sem afetar o que funciona, testar com dados reais incluindo erro, você validar, publicar. Antes de cada etapa que mexe no painel, guardamos cópia da versão anterior.
@@ -1551,7 +1724,27 @@ As versões intermediárias construíram Contas a Pagar, periodicidade semanal, 
 
 #### Painéis depois do v13 (04 a 07/08/2026)
 
-As sessões desses dias acrescentaram a **seção Contas** (5.10), a tela **Resultados** (5.11), o filtro por campo de data no financeiro e a busca por número de pedido. O número da versão do arquivo HTML **não é legível do lado do servidor** e fica pendente de confirmação por Rogério, para o quadro da seção 11 deixar de apontar o v13.
+As sessões desses dias acrescentaram a **seção Contas** (5.10), a tela **Resultados** (5.11), o filtro por campo de data no financeiro e a busca por número de pedido. ~~O número da versão do arquivo HTML não é legível do lado do servidor.~~ **Resolvido em 11/08/2026 pela decisão 9**: `CONFIG.VERSAO` no rodapé do menu.
+
+#### Vale-Crédito, as cinco fases (11 a 14/08/2026)
+
+O módulo foi construído em fases numeradas, com validação de Rogério entre cada uma. **Atenção ao ler**: esta numeração é só do Vale-Crédito e **não tem relação** com a "Fase 1" e a "Fase 2" desta seção 9, que são o painel operacional e o financeiro.
+
+| Fase | O que era | Situação |
+|---|---|---|
+| 1 | Tabela, view, funções de gerar e estornar, e a nona forma | **No ar em 12/08/2026** |
+| 2 | O consumo no pedido: três migrações | **No ar e testada em 13/08/2026** |
+| 3 | As três ações no OLV2 Clientes e o bloco `creditos` na carga | **No ar e testada em 13/08/2026** |
+| 4 | O painel: nona forma, saldo, divisão, extrato, geração, estorno, Cadastros | **Publicada em 14/08/2026**, versão `2026-08-14.2` |
+| 5 | Este merge no documento oficial | **Feito em 14/08/2026**, versão 5.3 |
+
+**Testes da Fase 2, todos dentro de transação revertida**: pedido dentro do saldo grava a saída; pedido acima do saldo é recusado inteiro e nada é gravado; a trava foi provada pelo `xmax` da linha do cliente; divisão aceita; edição recusada; exclusão gerando um estorno automático; e zero movimentos de conta citando o pedido ou a forma.
+
+**Testes da Fase 3, com o banco pinado**: colaborador tentando estornar é recusado antes do banco; navegador mandando `responsavel: "INVASOR"` é ignorado; `"100,50"` vira 100.50; a ação `buscar` antiga ficou intacta; e a carga do colaborador sai sem custo, lucro e taxa.
+
+**Testes da Fase 4**: 67 passos de aceite num navegador sem rede, com todo `fetch` respondido por um dublê, cobrindo as duas travas do Salvar, o número digitado à mão que não é corrigido, os quatro casos do extrato, o colaborador sem botão de estorno e sem as colunas de administrador, o Conta destino sumindo só no Vale-Crédito, e o ranking ignorando crediário, em aberto, Gás do Povo e pedido não concluído. Nenhum dado de teste entrou no arquivo do painel.
+
+**Correção pré-existente aplicada junto, com autorização de Rogério em 14/08/2026.** O gravador de campo do formulário de Cadastros procurava a definição só na lista principal, e **os seis interruptores de comportamento da forma de pagamento** (`gera_recebivel`, `exige_vencimento`, `prazo_dias`, `zera_pedido`, `e_de_terceiro`, `usa_maquininha`) vivem em outra lista. A busca devolvia indefinido, a linha seguinte quebrava dentro do tratador do evento, e **o valor nunca era anotado**: quem marcava e salvava via a tela fechar sem erro e o interruptor continuar como estava. Existia desde 05/08/2026, quando esses campos ficaram editáveis. **Consequência a conferir fora de sessão**: qualquer ajuste feito nesses seis interruptores entre 05/08 e 14/08 não foi gravado.
 
 #### Cuidados
 
@@ -1790,11 +1983,45 @@ Separar duas coisas hoje misturadas:
 - **Pendência 27**: duas colunas chamadas `lucro` com sentidos diferentes, na `vw_pedidos` e na `vw_resultados`.
 - **Pendência 28**: `contas_ajustes` sem nenhum lançamento desde 03/08.
 
+**Vale-Crédito: as 20 decisões, todas fechadas entre 11 e 14/08/2026.**
+
+Nenhuma delas está em aberto. Estão aqui reunidas porque foram tomadas em quatro dias e em quatro sessões diferentes, e a próxima sessão precisa saber que não deve reabri-las.
+
+| # | Decisão | Data |
+|---|---|---|
+| 1 | Vale-Crédito é saldo do cliente. "Pago hoje, busco sábado" é pedido normal em Aguardando, pago com a forma Vale-Crédito | 11/08 |
+| 2 | O saldo nunca fica negativo. Passando do saldo, o pagamento é dividido | 11/08 |
+| 3 | O pré-pago fica exatamente como está | 11/08 |
+| 4 | O crédito é eterno, sem validade | 11/08 |
+| 5 | Não existe devolução em dinheiro | 11/08 |
+| 6 | Qualquer operador ativo gera crédito. O estorno é exclusivo do administrador | 11/08 |
+| 7 | Editar pedido que consumiu é recusado até o estorno | 11/08 |
+| 8 | Excluir pedido que consumiu é permitido, com estorno automático | 11/08 |
+| 9 | Marcador `CONFIG.VERSAO` no painel, obrigatório | 11/08 |
+| 10 | A geração aceita cinco formas: Dinheiro, Pix, Débito, Crédito e Gás do Povo | 12/08 |
+| 11 | O cliente gasta o crédito na hora. O saldo não olha `data_caixa` | 12/08 |
+| 12 | Cartão e Gás do Povo entram no saldo das contas pelo líquido, na data em que o dinheiro cai | 12/08 |
+| 13 | Na geração, cartão é sempre à vista | 12/08 |
+| 14 | `conta_movimentos` é a fonte única do movimento de conta, e o consumo nunca aparece em conta | 13/08 |
+| 15 | Resultados conta o Vale-Crédito no dia da venda. A geração não aparece em Resultados. A tela ganha filtro por forma, sem mexer na view | 13/08 |
+| 16 | A divisão é da tela, o banco só recusa | 13/08 |
+| 17 | O extrato leva botão de estorno para o administrador, com confirmação em duas etapas | 13/08 |
+| 18 | O campo Conta destino some do formulário de Cadastros quando a forma for Vale-Crédito. Só no painel: nada no banco | 13/08 |
+| 19 | O valor do Vale-Crédito vem preenchido com o menor entre o saldo e o que falta pagar, na hora de escolher a forma. **A tela nunca corrige número digitado à mão**: nesse caso avisa e trava o Salvar | 13/08 |
+| 20 | Ao escolher Vale-Crédito, a tela **abre sozinha a linha do restante** com o que falta pagar, e o foco vai para a forma dela | 14/08 |
+
+**A 19 e a 20 convivem, e a ordem entre elas importa.** A 20 cria uma linha nova, o que não é alterar número de ninguém. A 19 continua valendo inteira: se o operador digitar à mão mais que o saldo, a tela **não corrige**, mostra o saldo disponível e trava o Salvar até ele ajustar. Rede de segurança, não caminho principal.
+
+**Decisões de tela desta implementação**, menores, todas escritas em comentário no código do painel: a nona forma entrou também em `ORDEM_FORMAS_PAGAMENTO` com uma nona cor, senão a rosca do Dashboard repetiria a cor do Dinheiro; cliente sem saldo mostra R$ 0,00 escrito no formulário de pedido e traço na lista; Vale-Crédito não é oferecido na edição de pedido, e a edição de pedido que já usa Vale-Crédito é recusada na tela com o caminho de saída escrito; `sincronizarPagamentoUnico` **não** foi alterada para respeitar o saldo, porque limitar ali faria a tela decidir sozinha que o pedido não cabe todo em crédito.
+
 **Ações do Rogério, fora de sessão:**
 
 - Preencher saldo inicial e data inicial do **Caixa da Loja**, a última conta que falta, pendência 21.
-- Confirmar o número da versão do arquivo HTML publicado, para o quadro da seção 11.
+- ~~Confirmar o número da versão do arquivo HTML publicado~~: **resolvido pela decisão 9**, o número está no rodapé do menu.
 - Decidir a pendência 26.
+- **Decidir a pendência 32**, a taxa do cartão que some do lucro do pedido pago com crédito. É a que mais custa dinheiro e a que menos aparece.
+- **Auditoria dos valores de todas as contas**, com o Sicredi negativo entre elas.
+- Decidir se a geração de crédito ganha um piso de data, pendência 39.
 
 ---
 
@@ -1814,21 +2041,24 @@ Separar duas coisas hoje misturadas:
 | Identificadores dos workflows novos, **conferidos em 08/08/2026, inalterados desde a v5.1** | Dados `fi2DPaA6qL7MxwIV`; Pedido `aPr6vx4oesVfkLis`; **Estoque `V3LHZ9kYui2NMMu0`**; Clientes `ClsDIM8jVRB5fijC`; Cadastros `fV9fzAM81cT2Pvma`; **Financeiro `ASx4FI8ZZEFcmv07`**; **Resultados `d2rKeJd5vbzNOJpj`** |
 | IDs antigos que **não** valem mais | Estoque `3l15lOfGCeYqLEu7` e Financeiro `q4Bbzx7BSn6EiwjQ`, escritos até a v5.0. Trocaram porque a publicação foi feita substituindo o workflow por uma cópia nova. Ver seção 4.2 |
 | Cópias de backup, desativadas | BACKUP OLV2 Estoque `gwKsvNj6AbBvho9B`; BACKUP OLV2 Financeiro `WqwpnFh4yHu7LPIG`; BACKUP OLV2 Financeiro v10 `nGZFU6PchJgh7rmW` |
-| Banco de dados | Supabase PostgreSQL 17, projeto olv-distribuidora_sistema (`ggvfrnympdrqyqxgcyex`), região São Paulo. **10 tabelas de movimento, 7 de cadastro (17 ao todo), 5 views de apoio**, RLS ativa nas 17, conferido em 08/08/2026. **Papéis públicos sem acesso ao schema `public` desde 31/07/2026** |
+| Banco de dados | Supabase PostgreSQL 17, projeto olv-distribuidora_sistema (`ggvfrnympdrqyqxgcyex`), região São Paulo. **11 tabelas de movimento, 7 de cadastro (18 ao todo), 6 views de apoio**, conferido em 14/08/2026 com a `creditos_movimentacoes` e a `vw_creditos_clientes` somadas. **Papéis públicos sem acesso ao schema `public` desde 31/07/2026** |
 | Volume real em 08/08/2026 | 949 clientes, 6 produtos, **6 fornecedores**, 165 pedidos (desde 01/08), 175 itens, 171 pagamentos, 44 contas a receber, 29 contas a pagar, 14 baixas, 18 movimentações de estoque, 0 ajustes de conta |
+| Volume real em 14/08/2026 | **970 clientes**, 286 pedidos, 305 itens, 298 pagamentos, 59 baixas, **19 fornecedores**, **9 formas de pagamento**, 5 contas e **4 movimentos de Vale-Crédito**, somando R$ 409,34 em saldo de quatro clientes |
 | Rotina de fechamento de acesso | `fechar_acesso_publico()` e `auditar_acesso_publico()`, criadas em 01/08/2026. Rodar depois de **toda** migração. Seção 8.6 |
 | Funções de gravação de pedido | `registrar_venda` (criar) e `atualizar_venda` (editar por completo). As duas numa transação só, as duas capturando a taxa do cartão. A `atualizar_venda` recusa pedido com baixa lançada, desde 01/08/2026 |
 | Funções do financeiro | `financeiro_operar`, `registrar_baixa`, `estornar_baixa`, `criar_receber`, `excluir_receber`, `criar_pagar`, `editar_pagar`, `excluir_pagar`, `somar_dias_uteis` e `fluxo_caixa_consultar`. As operações financeiras são exclusivas do administrador, com trava positiva no endpoint e no banco |
 | Funções da seção Contas (03/08/2026) | `contas_consultar`, `saldo_conta_calculado`, `conta_ajustar`, `conta_conciliar` e `estornar_ajuste_conta`. Todas exclusivas do administrador. Seção 3.14 |
-| Views de apoio | `vw_pedidos`, `vw_estoque_atual`, `vw_contas_receber`, `vw_contas_pagar` e `vw_resultados` (05/08/2026). A `vw_resultados` ganhou `pagamentos_detalhe` em 08/08/2026 e a `vw_contas_pagar` ganhou `fornecedor_id` no mesmo dia |
+| Views de apoio | `vw_pedidos`, `vw_estoque_atual`, `vw_contas_receber`, `vw_contas_pagar`, `vw_resultados` (05/08/2026) e **`vw_creditos_clientes` (12/08/2026)**. A `vw_resultados` ganhou `pagamentos_detalhe` em 08/08/2026 e a `vw_contas_pagar` ganhou `fornecedor_id` no mesmo dia |
+| Funções do Vale-Crédito (12 e 13/08/2026) | `credito_gerar`, `credito_estornar` e `credito_extrato`, mais o gatilho `before delete` em `vendas` que estorna sozinho quando o pedido que consumiu crédito é excluído. O estorno é exclusivo do administrador, com trava no endpoint e no banco. Seção 3.16 |
 | Cadastros do financeiro | `contas`, `maquininhas`, `bandeiras`, `taxas_cartao`, `formas_pagamento`, `categorias_conta_pagar`, criados em 31/07/2026, mais **`fornecedores`**, criada em 08/08/2026. Workflow OLV2 Cadastros e tela de Cadastros cobrem as oito. Seções 3.12, 3.15, 4.3 e 5.4 |
+| Migrações do Vale-Crédito | **12/08/2026**: criação de `creditos_movimentacoes`, `vw_creditos_clientes`, `credito_gerar`, `credito_estornar` e da nona forma de pagamento. **13/08/2026**: `registrar_venda_consome_vale_credito`, `atualizar_venda_recusa_pedido_com_vale_credito`, `estorno_automatico_de_vale_credito_na_exclusao_do_pedido` e `credito_extrato_leitura_do_saldo_e_movimentos`. Todas seguidas de `fechar_acesso_publico()`, com auditoria em zero linhas. **Nenhuma migração em 14/08/2026** |
 | Migrações de 08/08/2026 | `vw_resultados_add_pagamentos_detalhe`; `criar_fornecedores_e_ligar`; `criar_pagar_com_fornecedor_id`; `editar_pagar_com_fornecedor_id`; `cadastro_operar_base_v24_add_fornecedores`; `vw_contas_pagar_add_fornecedor_id_v2`; `financeiro_operar_add_fornecedores_listar_pagar`. Todas seguidas de `fechar_acesso_publico()`, com auditoria em zero linhas |
 | Maquininha e taxas | Rede. Padrão (Mastercard e Visa) e Outras (Elo). Débito 0,69 e 1,49; crédito à vista 2,71 e 3,51; 2x 3,78 e 4,58; 3x 4,35 e 5,15. `prazo_debito_dias` e `prazo_credito_dias` em 1 dia útil. Pix sem taxa |
 | Conexão n8n para Supabase | Session Pooler IPv4, host aws-0-sa-east-1.pooler.supabase.com, porta 5432, base postgres, usuário postgres.ggvfrnympdrqyqxgcyex, SSL ativo. Credencial "Supabase OLV" |
 | Domínio | olvdistribuidora.com.br no Registro.br. painel.olvdistribuidora.com.br configurado no Cloudflare e no ar desde 30/07/2026 |
 | Fonte de clientes | Google Contatos, 910 importados em 30/07/2026. **949 clientes em 08/08/2026**, os 39 a mais cadastrados pela operação |
-| Painel HTML atual | **Publicado.** Worker `painel-olv` no Cloudflare (`ffafb32017294e8ea1c09c86f2d01734`), atualizado pela última vez em **08/08/2026 às 14h36 UTC**, depois das migrações do dia. O arquivo no ar contém o módulo de Fornecedores. **Não existe número de versão dentro do arquivo**, ver a linha abaixo e a pendência 30 |
-| Marcador de versão do painel, **proposta de 08/08/2026** | Criar uma constante única no bloco `CONFIG` do painel, por exemplo `VERSAO: '2026-08-08.1'`, e exibi-la no rodapé do menu lateral, ao lado do nome do usuário. Três ganhos: Rogério confere pela tela qual arquivo está aberto sem abrir o Cloudflare; a IA confere pela mesma tela numa auditoria; e a versão passa a viajar junto com o arquivo, em vez de depender da memória de quem publicou. Custo: uma linha no `CONFIG` e uma no rodapé, e a disciplina de mexer nela a cada publicação. **Não aplicada, aguardando decisão de Rogério.** Encerra a pendência 30 |
+| Painel HTML atual | **Publicado.** Worker `painel-olv` no Cloudflare (`ffafb32017294e8ea1c09c86f2d01734`). Versão no ar em 14/08/2026: **`2026-08-14.2`**, lida no rodapé do menu lateral. Contém o Vale-Crédito completo, o ranking e o filtro de período da tela Clientes |
+| Marcador de versão do painel | **Aplicado em 11/08/2026 (decisão 9), e em uso.** Constante `CONFIG.VERSAO` no topo do arquivo, no formato `AAAA-MM-DD` mais a sequência do dia, mostrada no rodapé do menu lateral ao lado do usuário logado. Encerrou a pendência 30. **Quem publicar tem de subir o número**, com a data real da publicação, não a data em que o código foi escrito |
 | Cores do painel | Upgrade visual v13 aprovado em 03/08/2026. Usa azuis, verde e branco da identidade comercial da OLV, amarelo para destaque e vermelho para alerta, com temas claro e escuro |
 | Favicon / ícone de app | Embutido no HTML como data URI: favicon 16/32px, apple-touch-icon 180px, ícone de manifest 192px, cantos com transparência real |
 | Documento oficial | GitHub rogeriosandre/olv-distribuidora, Painel_OLV_Documentacao_e_Evolucao.md |
@@ -1943,7 +2173,8 @@ Primeira linha da resposta: **Modelo indicado: [X]. Motivo: [tipo de tarefa].** 
 | 31/07/2026 | 3.7 | Cabeçalho realinhado ao log (estava parado em 3.4) e a regra 7 detalhada com o caminho de resolução por commit, depois da reincidência de cache do mesmo dia. Sem mudança de conteúdo além disso. Seção 11. |
 | 31/07/2026 | 3.8 | **Sessão Sonnet 5: quatro tarefas do painel, três bugs de produção pré-existentes corrigidos, ajustes de uso.** (a) **Pendência 13 encerrada por completo**: o endpoint OLV2 Estoque ganhou a ação `excluir`, restrita ao administrador, com botão e confirmação em duas etapas no painel; a saída automática de venda concluída nunca mostra o botão, por ser calculada, não gravada. Seções 3.11, 7 e 9.2. (b) A coluna `vendas.acrescimo`, criada na v3.6 mas ainda sem uso no formulário, foi ligada à tela: seletor único de Desconto ou Acréscimo, nunca os dois ao mesmo tempo, validado também no servidor. Seção 9.2. (c) O campo de valor unitário do pedido passou a ser preenchido com `produtos.preco_venda` ao escolher o produto, continuando editável e negociável item a item. Seção 9.2. (d) **Construído e publicado o workflow OLV2 Cadastros** (`fV9fzAM81cT2Pvma`), antecipando parte da etapa 9.7 a pedido de Rogério: cobre as sete tabelas de cadastro do financeiro, com tela exclusiva do administrador e o mesmo bloco de entrada dos outros quatro endpoints. Seções 3.12, 4.2 e 5.4. (e) **Três bugs de produção encontrados e corrigidos**, sem relação com as quatro tarefas acima: a publicação dos quatro workflows OLV2 estava atrasada em relação ao painel já no ar, causando divergência entre o acréscimo enviado pelo painel e o que o backend antigo esperava, corrigida publicando os quatro; o `queryReplacement` do nó Postgres do n8n corta valor por vírgula e descarta parâmetro que resolve para string vazia, quebrando `Consultar Itens T` e `Consultar Itens P` do OLV2 Dados (lista de pedidos do período) e `Consultar Histórico` do OLV2 Estoque (filtro Tipo em branco); documentado como armadilha nova na seção 8.5, corrigido nos três nós e publicado. (f) **Ajustes de uso**: todas as telas com filtro de período passaram a carregar sozinhas ao abrir, sem precisar clicar em Buscar; Estoque ganhou painel de "Movimentações de hoje" na aba Produtos e passou a mostrar 7 dias por padrão na aba Histórico, com indicador colorido (verde para entrada, vermelho para saída) e datas sem horário; campo de data retroativa no formulário de pedido, corrigindo bug em que a data enviada ao servidor era sempre a de hoje; valor do pagamento preenchido automaticamente quando há uma única linha; cards de pedido mostrando só a data; coluna Endereço adicionada à tabela de Clientes. Seções 9.1 e 9.2. (g) Todos os dados de teste gerados na sessão, incluindo os do próprio Rogério durante a validação em produção, removidos do banco ao final, conferido por SQL. |
 | 01/08/2026 | 3.9 | **Sessão Opus 5: religação da `registrar_venda`, edição completa de pedido, pendência 17 resolvida e primeiro dia de operação real.** (a) **Decisão da seção 9.4 fechada: guardar as duas margens.** As duas opções do documento fechavam uma porta cada; a terceira saída faz a `vw_pedidos` calcular margem bruta e líquida ao mesmo tempo, deixando a escolha de qual mostrar como decisão de tela, reversível. `pagamentos` ganhou oito colunas de cartão, com `valor` continuando cheio pela trava adiada. (b) **`registrar_venda` religada** à tabela `formas_pagamento`, com conferência prévia campo a campo provando que o comportamento não mudou, e com captura da taxa do cartão. Nunca bloqueia a venda por taxa ausente: grava sem taxa e devolve aviso. (c) **Interruptor de bandeira "Outras"** na tela de venda, com seletor de parcelas só no crédito. (d) **Função `atualizar_venda` criada**: edição completa de pedido, inclusive já concluído. A proposta original de criar uma situação "Finalizado" foi descartada, porque criaria uma janela em que o produto já saiu e o sistema ainda o conta no depósito; descobriu-se que os gatilhos de 31/07 já resolviam o recálculo, e faltava só a função. Custo dos itens preserva o original e carimba o de hoje só nos produtos novos. (e) **Pendência 17 resolvida em três frentes indissociáveis**: CORS no OLV Contas, ação `resetar_senha` para o administrador, e troca de senha obrigatória dentro do painel novo. O diagnóstico da v3.8 subestimava o problema: o login **bloqueava** quem tinha troca pendente e mandava usar o painel antigo, desativado em 31/07, deixando a pessoa trancada fora do sistema. Aconteceu com a usuária Gabriele. (f) **Regra da seção 3.10 corrigida**: "objeto novo nasce fechado" está errado para funções. Tabela nasce fechada, **função nasce aberta**, testado três vezes, e `ALTER DEFAULT PRIVILEGES` não resolve. Criadas `fechar_acesso_publico()` e `auditar_acesso_publico()`, e a regra 9 das instruções. Nova seção 8.6. (g) **A regra de exclusão de cadastro não funcionava**: ela depende de o banco recusar o DELETE, e `formas_pagamento` e `categorias_conta_pagar` não são referenciadas por chave nenhuma, enquanto `taxas_cartao` apontava para maquininhas com CASCADE. Corrigido com RESTRICT e dois gatilhos. (h) **Erro de digitação corrigido no custo do Gás 13kg**: o Estoque Inicial foi lançado com quantidade 37 e custo 37,00, quando o real é 87,00, inflando o lucro do dia em R$ 200,00. Exigiu correção em duas frentes, porque o custo do item é congelado na venda. (i) **Faturamento passou a contar só pedido concluído**, mesmo critério do estoque, encerrando a divergência de dois critérios para o mesmo pedido. (j) **Cartão deixou de virar recebível** (pendência 9 redesenhada): o Fluxo de Caixa projeta direto de `pagamentos`. Gás do Povo continua virando. (k) **Financeiro antecipado**, deixando de esperar a etapa 9.7, pelo mesmo raciocínio que liberou os Cadastros em 31/07. (l) **Painel v5** com nove correções de uso pedidas no primeiro dia de operação, entre elas a perda de foco e de rolagem ao digitar, que eram um bug só. Cinco pendências novas registradas, 18 a 23, sendo duas de cadastro que dependem só do Rogério. |
-| 01/08/2026 | 4.0 | **Sessão Opus 5: Contas a Receber construída de ponta a ponta, mais dois bugs de produção corrigidos.** (a) **Pendência 18 fechada**: tabela `baixas` criada (seção 3.13), com as três travas e o status do pai calculado por releitura em vez de digitado, pelo mesmo raciocínio que resolveu o custo médio na pendência 13. Por isso a tela não tem botão de "marcar como recebido". (b) **Pendência 19 fechada**: a `atualizar_venda` passou a recusar pedido que já tenha baixa lançada, com mensagem pedindo o estorno antes. (c) **Endpoint OLV2 Financeiro construído e publicado** (`q4Bbzx7BSn6EiwjQ`), copiando nó a nó o padrão do OLV2 Cadastros, com duas travas de administrador em série e o `responsavel` da baixa vindo do token, nunca do navegador. Seção 4.4. (d) **Tela de Contas a Receber publicada** (seção 5.6), com quatro indicadores, filtros de situação, busca no servidor e histórico de baixas por linha. (e) **Lançamento manual criado a pedido do Rogério**: funções `criar_receber` e `excluir_receber`, com a trava de que só o que foi lançado à mão pode ser excluído, e só enquanto não tiver nenhuma baixa. Seção 3.8. (f) **Filtro de vencimento com horizonte**, atalhos de 30 dias, 3 meses e 12 meses, com o limite escrito na tela para nada sumir sem a pessoa perceber. (g) **Botão Atualizar removido**: a tela recarrega sozinha a cada visita, como as demais. (h) **Bug de layout corrigido na tela de Vendas**: as colunas do quadro tinham altura máxima calculada por chute (altura da janela menos 320 pixels), e em janela mais baixa o último cartão ficava cortado. Trocado por layout de altura real, com uma única área de rolagem. (i) **Bug de data corrigido, achado na conferência**: data pura era lida pelo navegador como meia-noite em Londres, e o vencimento aparecia um dia antes do que estava gravado. Pendência 25. (j) **Pendência 24 registrada**: a tabela `maquininhas` não tem prazo de crédito, ao contrário do que este documento afirmava. **Bloqueia o Fluxo de Caixa.** (k) Registrado na 9.4 o que falta para Contas a Pagar e para o Fluxo de Caixa, com as decisões que travam cada um. (l) `fechar_acesso_publico()` rodada depois de cada migração, com a auditoria devolvendo zero linhas.
+| 01/08/2026 | 4.0 | **Sessão Opus 5: Contas a Receber construída de ponta a ponta, mais dois bugs de produção corrigidos.** (a) **Pendência 18 fechada**: tabela `baixas` criada (seção 3.13), com as três travas e o status do pai calculado por releitura em vez de digitado, pelo mesmo raciocínio que resolveu o custo médio na pendência 13. Por isso a tela não tem botão de "marcar como recebido". (b) **Pendência 19 fechada**: a `atualizar_venda` passou a recusar pedido que já tenha baixa lançada, com mensagem pedindo o estorno antes. (c) **Endpoint OLV2 Financeiro construído e publicado** (`q4Bbzx7BSn6EiwjQ`), copiando nó a nó o padrão do OLV2 Cadastros, com duas travas de administrador em série e o `responsavel` da baixa vindo do token, nunca do navegador. Seção 4.4. (d) **Tela de Contas a Receber publicada** (seção 5.6), com quatro indicadores, filtros de situação, busca no servidor e histórico de baixas por linha. (e) **Lançamento manual criado a pedido do Rogério**: funções `criar_receber` e `excluir_receber`, com a trava de que só o que foi lançado à mão pode ser excluído, e só enquanto não tiver nenhuma baixa. Seção 3.8. (f) **Filtro de vencimento com horizonte**, atalhos de 30 dias, 3 meses e 12 meses, com o limite escrito na tela para nada sumir sem a pessoa perceber. (g) **Botão Atualizar removido**: a tela recarrega sozinha a cada visita, como as demais. (h) **Bug de layout corrigido na tela de Vendas**: as colunas do quadro tinham altura máxima calculada por chute (altura da janela menos 320 pixels), e em janela mais baixa o último cartão ficava cortado. Trocado por layout de altura real, com uma única área de rolagem. (i) **Bug de data corrigido, achado na conferência**: data pura era lida pelo navegador como meia-noite em Londres, e o vencimento aparecia um dia antes do que estava gravado. Pendência 25. (j) **Pendência 24 registrada**: a tabela `maquininhas` não tem prazo de crédito, ao contrário do que este documento afirmava. **Bloqueia o Fluxo de Caixa.** (k) Registrado na 9.4 o que falta para Contas a Pagar e para o Fluxo de Caixa, com as decisões que travam cada um. (l) `fechar_acesso_publico()` rodada depois de cada migração, com a auditoria devolvendo zero linhas. |
 | 03/08/2026 | 5.0 | **Contas a Pagar, pendência 24, Fluxo de Caixa, correções de produção e upgrade visual.** (a) **Contas a Pagar concluída de ponta a ponta**: `contas_pagar` ganhou série, parcela, modo de geração, periodicidade e ligação com estoque; criadas `vw_contas_pagar`, `criar_pagar`, `editar_pagar` e `excluir_pagar`; OLV2 Financeiro ganhou `listar_pagar`, `criar_pagar`, `editar_pagar` e `excluir_pagar`; tela publicada e testada. (b) **Decisões de recorrência fechadas por Rogério**: quantidade gerada de uma vez, modos Repetição e Parcelamento, periodicidade Mensal e Semanal, e edição somente da atual ou da atual mais as seguintes. (c) **Entrada de estoque ligada ao financeiro**: geração de conta a pagar continua opcional e, quando marcada, pergunta primeiro vencimento, quantidade e periodicidade. (d) **Pendência 24 fechada**: `maquininhas` ganhou `prazo_debito_dias` e `prazo_credito_dias`; Rede preenchida com 1 dia útil em ambos. (e) **Fluxo de Caixa concluído**: criadas `somar_dias_uteis` e `fluxo_caixa_consultar`; OLV2 Financeiro ganhou `fluxo_caixa`; tela publicada e testada com realizados, previstos, entradas, saídas e busca. Corrigida a confusão entre compromisso futuro e dinheiro já movimentado. (f) **Regra de conta de destino corrigida**: Crediário, Em aberto e Gás do Povo escolhem a conta na baixa; Gratuidade não movimenta dinheiro; cartão usa a conta da maquininha; só formas que entram na hora exigem destino no cadastro. (g) **Resumos financeiros passaram a respeitar o intervalo** em Contas a Pagar e Contas a Receber. No Fluxo de Caixa, os cartões do topo acompanham o período e usam rótulos curtos. (h) **Gás do Povo corrigido**: passou a gerar recebível com vencimento em 3 dias úteis e conta escolhida na baixa; vendas anteriores sem recebível foram reparadas com proteção contra duplicidade. (i) **Painéis v8 a v12** acrescentaram abertura mensal, lista de Pedidos com filtros e totais, pesquisa durante a digitação, ajustes de dimensões e Fluxo de Caixa. (j) **Painel v13 implementado em 03/08/2026**, depois de simulações aprovadas: upgrade visual completo com identidade da OLV, temas claro e escuro, login redesenhado, menu dividido em Vendas, Pedidos, Estoque e Movimentações, Dashboard com Faturamento, Gastos, Lucro, Margem, comparação, gráfico com pontos, formas de pagamento, Atenção hoje e itens vendidos; Clientes ganhou compra no mês e histórico. O Fluxo de Caixa ficou sem gráfico por decisão de Rogério. (k) v13 verificado localmente com JavaScript válido, sem dependência externa e sem dados de teste; aguarda publicação no Cloudflare e teste final no endereço real. (l) Todas as migrações terminaram com `fechar_acesso_publico()` e auditoria pública em zero linhas, conforme a seção 8.6. |
 | 07/08/2026 | 5.1 | **Sessão de conferência: documento comparado com a estrutura viva do Supabase, do n8n e do Cloudflare.** Nada foi alterado no sistema; a versão só registra o que já existia e não estava escrito. (a) **Tabela `contas_ajustes` documentada** (nova seção 3.14), criada em 03/08/2026, com as funções `contas_consultar`, `saldo_conta_calculado`, `conta_ajustar`, `conta_conciliar` e `estornar_ajuste_conta`. Conciliar grava só a diferença entre o saldo informado e o calculado, pelo mesmo raciocínio da pendência 13. (b) **View `vw_resultados` documentada** (seção 3.9), criada em 05/08 e ajustada em 06/08. É aditiva e separa a parte à vista da parte a prazo do pedido, para nenhum real ser contado duas vezes. (c) **Endpoint OLV2 Resultados documentado** (nova seção 4.5), `d2rKeJd5vbzNOJpj`, ativo desde 05/08, com os filtros rodando em JavaScript por causa da armadilha da seção 8.5. (d) **Telas Contas e Resultados documentadas** (novas seções 5.10 e 5.11). (e) **Gás do Povo deixou de gerar recebível em 05/08/2026** e passou a ser projetado como cartão, em 3 dias úteis. A seção 3.5 foi corrigida e o efeito colateral virou a **pendência 26**: não existe mais onde registrar atraso ou diferença no repasse. (f) **Identificadores corrigidos**: OLV2 Estoque é `V3LHZ9kYui2NMMu0` e OLV2 Financeiro é `ASx4FI8ZZEFcmv07`; os IDs escritos até a v5.0 pertencem a cópias desativadas. Criada a regra 11 das instruções. (g) **Contagens corrigidas**: 10 tabelas de movimento, 6 de cadastro e 5 views; 936 clientes; 121 pedidos entre 01/08 e 07/08; 16 avisos informativos do auditor, nenhum de nível WARN, e `auditar_acesso_publico()` em zero linhas. (h) **Pendência 20 fechada** e **21 quase fechada**: falta só o Caixa da Loja, e sem `data_inicial` a conciliação dessa conta é recusada. (i) **Publicação do painel confirmada**: o Worker `painel-olv` foi atualizado em 07/08/2026, encerrando a pendência que vinha desde 03/08. O número da versão do HTML não é legível pelo servidor e fica para Rogério confirmar. (j) **Pendências novas 27 e 28**: duas colunas chamadas `lucro` com sentidos diferentes na `vw_pedidos` e na `vw_resultados`, e `contas_ajustes` sem nenhum lançamento desde que foi criada. (k) Documentados o filtro `campo_data` e a busca por número de pedido, de 07/08/2026, incluindo o efeito de a lista passar a ter uma linha por baixa quando o filtro é por pagamento. |
 | 08/08/2026 | 5.2 | **Módulo de Fornecedores documentado, e três divergências entre o documento e o sistema corrigidas.** Conferido contra o Supabase, o n8n, o Cloudflare e o arquivo do painel nesta data. (a) **Tabela `fornecedores` documentada** (nova seção 3.15), criada em 08/08/2026 com nome único, e ligada por `fornecedor_id` a `contas_pagar` e a `estoque_movimentacoes`, as duas sem cascata. Passam a ser **17 tabelas: 10 de movimento e 7 de cadastro**. (b) **Sete migrações de 08/08/2026 registradas** na seção 11, incluindo `vw_resultados_add_pagamentos_detalhe` e `vw_contas_pagar_add_fornecedor_id_v2`. Auditoria de acesso público em zero linhas depois de todas. (c) **Quatro workflows republicados em 08/08/2026** (Cadastros, Estoque, Financeiro e Clientes), **sem troca de identificador**, o que corrige a leitura de que publicar sempre troca o número: troca quando a publicação substitui o workflow por uma cópia, não quando atualiza no lugar. Seção 4.2. (d) **Telas atualizadas**: Cadastros passou de sete para oito abas (5.4); Estoque ganhou campo de fornecedor com sugestões e filtro por fornecedor no histórico (5.2). (e) **Auditoria de permissão da criação automática de fornecedor**, conforme a regra 8: o campo só aparece em Entrada e Estoque Inicial, exclusivos do administrador, e a tela de Contas a Pagar também é. Nenhum colaborador alcança o endpoint de cadastros. Seção 3.15. (f) **Corrigido**: a seção 4.4 ainda trazia o identificador antigo do OLV2 Financeiro, `q4Bbzx7BSn6EiwjQ`, que pertence a uma cópia desativada. O certo é `ASx4FI8ZZEFcmv07`, como a 4.2 já dizia. (g) **Corrigido**: o documento afirmava que o Fluxo de Caixa estava no ar. Ele está **oculto no menu desde 05/08/2026** por decisão de Rogério, com a tela inteira preservada e reativação por uma linha. Seção 5.8. (h) **Nova seção 8.7 e nova regra 13**: o arquivo do painel carrega um retrato da tela congelado em 31/07/2026, e quem ler o HTML sem executar JavaScript enxerga um menu antigo com itens "Em construção". O menu real está na constante `ITENS_MENU`. Foi essa armadilha que quase virou um diagnóstico errado de publicação atrasada. (i) **Nova seção 5.0** com o mapa do menu conferido no arquivo, como índice da seção 5. (j) **Pendências novas 29 e 30**: `fornecedor` em texto e `fornecedor_id` guardam a mesma informação e divergem se o fornecedor for renomeado, decidida como pendência aberta por Rogério; e o arquivo do painel não tem número de versão em lugar nenhum, que é a causa real da pendência que vinha desde a v5.0, com proposta de marcador na seção 11. (k) **Pendência 28 encerrada como esclarecida**: Rogério confirmou que a tela de Contas funciona e é encontrada, e que o zero em `contas_ajustes` é porque o financeiro ainda não fez os lançamentos. Não é defeito, é adoção. **A pendência 21 foi reforçada em troca**: como nenhum ajuste foi feito ainda, a primeira tentativa tende a ser no Caixa da Loja, que está sem saldo e data iniciais e por isso será recusada, com risco de a recusa ser lida como tela quebrada. Seções 3.11 e 5.10. (l) Volume real atualizado: 949 clientes, 165 pedidos, 6 fornecedores. Nada foi alterado no sistema nesta sessão. |
+| 14/08/2026 | 5.3 | **Vale-Crédito construído de ponta a ponta, em cinco fases entre 11 e 14/08/2026, e no ar.** Merge das quatro sessões. (a) **Nova seção 3.16**: tabela `creditos_movimentacoes`, view `vw_creditos_clientes` e as três funções, mais o gatilho `before delete` em `vendas`. **Nenhum saldo é guardado**: a tabela guarda movimentos e o saldo é a soma deles, pelo mesmo raciocínio que resolveu o custo médio na pendência 13 e o status das contas na pendência 18. (b) **Nona forma de pagamento** criada em 12/08, com todos os interruptores desligados e `conta_destino_id` nulo de propósito, porque o consumo de crédito não movimenta conta: o dinheiro entrou na geração. Seção 3.5. (c) **O consumo é gravado dentro da transação do pedido**, com trava `for update` na linha do cliente; o pedido inteiro é recusado se o Vale-Crédito passar do saldo, dizendo o saldo disponível. Editar pedido que consumiu é recusado; excluir é permitido e devolve o crédito sozinho. (d) **Nova seção 4.6**: as três ações no OLV2 Clientes, republicado no lugar sem trocar de identificador, com o `responsavel` vindo do token e o estorno com duas travas em série. (e) **Nova seção 5.12**: coluna de saldo, modal com extrato e geração, estorno em duas etapas para o administrador, e o motivo escrito quando o movimento não pode ser estornado. (f) **Vinte decisões fechadas por Rogério** entre 11 e 14/08, reunidas na seção 10 para não serem reabertas. As duas mais delicadas: a 19, que preenche o valor do Vale-Crédito com o menor entre o saldo e o que falta pagar **sem nunca corrigir número digitado à mão**, e a 20, que abre sozinha a linha do restante. (g) **Decisão 18 aplicada**: o campo Conta destino some do formulário de Cadastros quando a forma é Vale-Crédito, com a frase explicando e comentário no código. **Só no painel**: o banco continua aceitando, e isso virou a pendência 31. (h) **Data retroativa na geração, em 14/08**: a função já aceitava o campo desde 12/08, mas os dois nós do n8n descartavam. Virou a **regra 14** das instruções, porque o sintoma é nada acontecer. Servidor recusa data futura pelo horário de São Paulo, formato errado e data que não existe. (i) **Tela Clientes ganhou filtro de período** igual ao das outras sete, e o card e a coluna passaram de "mês" para "período", uma régua só. **Ranking dos três que mais compraram**, exclusivo do administrador, somando só o que o cliente pagou à vista ou com Vale-Crédito: crediário, em aberto, Gás do Povo e pedido não concluído ficam de fora. Virou a **regra 15** das instruções. (j) **Nova seção 8.8**: no CSS, `min-width` vence `max-width` por definição, e não por especificidade. Uma regra geral escrita para as tabelas fazia a busca da tela Clientes ignorar o próprio limite de largura. O mesmo problema continua no filtro de Tipo da tela Estoque. (k) **Defeito pré-existente corrigido com autorização**: os seis interruptores de comportamento da forma de pagamento não gravavam nada desde 05/08/2026, sem erro na tela. (l) **Pendência 30 encerrada** pela decisão 9, com `CONFIG.VERSAO` no rodapé do menu. **Nove pendências novas, 31 a 39**, sendo a **32 a de maior risco financeiro**: crédito gerado no cartão paga taxa na geração, e o pedido pago com esse crédito aparece com lucro cheio, sem erro e sem aviso. (m) **Em uso real desde 14/08/2026**: 4 gerações retroativas somando R$ 409,34 em saldo de quatro clientes, nenhuma no cartão. Volume atualizado para 970 clientes, 286 pedidos, 19 fornecedores, 18 tabelas e 6 views. Nenhuma migração foi aplicada em 14/08. |
